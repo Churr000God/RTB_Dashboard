@@ -3,22 +3,22 @@
 """App local para validar la descarga de datos RTB via n8n."""
 
 from datetime import datetime, timezone
+import json
 import os
 import shutil
 from pathlib import Path
 from time import sleep as sleep_seconds
-from secrets import compare_digest
 from html import escape
 from typing import Callable
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import requests
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from rtb_analisis import build_ventas_dashboard, load_cotizaciones, read_csv
-from rtb_actualizacion import InvalidRunError, RunNotFoundError, UpdateCoordinator, atomic_write_json
 
 
 WEBHOOK_URLS = {
@@ -33,27 +33,24 @@ CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
 
 
+def atomic_write_json(path, payload) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    with temporary.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, default=str)
+        fh.write("\n")
+    os.replace(temporary, path)
+
+
 class UpdateRequest(BaseModel):
     ambiente: str
     fecha_desde: str
     fecha_hasta: str
 
 
-class FinishRequest(BaseModel):
-    run_id: str
-    archivos: list[str]
-
-
 def build_payload(fecha_desde: str, fecha_hasta: str) -> list[dict[str, str]]:
     return [{"after": fecha_desde}, {"before": fecha_hasta}]
-
-
-def build_run_payload(run_id: str, callback_url: str, fecha_desde: str, fecha_hasta: str) -> dict:
-    return {
-        "run_id": run_id,
-        "callback_url": callback_url,
-        "filtros": build_payload(fecha_desde, fecha_hasta),
-    }
 
 
 def parse_iso_date(value: str, label: str) -> datetime:
@@ -101,16 +98,10 @@ def call_webhook(
     fecha_desde: str,
     fecha_hasta: str,
     http_post: Callable[..., requests.Response] | None = None,
-    run_id: str | None = None,
-    callback_url: str | None = None,
 ) -> dict:
     normalized, _, _ = validate_request(ambiente, fecha_desde, fecha_hasta)
     url = resolve_webhook_url(normalized)
-    payload = (
-        build_run_payload(run_id, callback_url, fecha_desde, fecha_hasta)
-        if run_id and callback_url
-        else build_payload(fecha_desde, fecha_hasta)
-    )
+    payload = build_payload(fecha_desde, fecha_hasta)
     post = http_post or requests.post
 
     response = post(url, json=payload, timeout=HTTP_TIMEOUT_SECONDS)
@@ -217,17 +208,10 @@ def validate_webhook_success(webhook: dict) -> None:
         raise WebhookResponseError("n8n no confirmo la actualizacion con {\"ok\": true}")
 
 
-def load_dashboard_payload(data_dir: str = "data", coordinator=None, dashboard_dir: str = "dashboard_data") -> dict:
+def load_dashboard_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
     sales_snapshot = Path(dashboard_dir) / SALES_SNAPSHOT_FILENAME
     if sales_snapshot.exists():
-        import json
-
         return json.loads(sales_snapshot.read_text(encoding="utf-8"))["dashboard"]["ventas"]
-    if coordinator is not None:
-        try:
-            return coordinator.load_latest()["dashboard"]["ventas"]
-        except FileNotFoundError:
-            pass
     rows = load_cotizaciones(data_dir)
     dates = [row.get("Fecha_creacion", "")[:10] for row in rows if row.get("Fecha_creacion")]
     period_label = "Periodo actual"
@@ -1851,25 +1835,12 @@ def create_app(
     data_dir: str = "data",
     processed_dir: str = "data_procesada",
     dashboard_dir: str = "dashboard_data",
-    callback_url: str | None = None,
-    callback_token: str | None = None,
-    coordinator=None,
 ) -> FastAPI:
     app = FastAPI(title="Dashboard RTB", version="0.3.0")
     app.state.http_post = http_post
     app.state.data_dir = data_dir
     app.state.dashboard_dir = dashboard_dir
     app.state.processed_dir = processed_dir
-    app.state.callback_url = callback_url or os.getenv(
-        "RTB_CALLBACK_URL",
-        "http://localhost:8000/api/actualizaciones/finalizar",
-    )
-    app.state.coordinator = coordinator or UpdateCoordinator(
-        data_dir=data_dir,
-        processed_dir=processed_dir,
-        dashboard_dir=dashboard_dir,
-        callback_token=callback_token if callback_token is not None else os.getenv("RTB_CALLBACK_TOKEN", ""),
-    )
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -1879,7 +1850,7 @@ def create_app(
     def dashboard_ventas(request: Request) -> dict:
         try:
             return load_dashboard_payload(
-                request.app.state.data_dir, request.app.state.coordinator, request.app.state.dashboard_dir
+                request.app.state.data_dir, request.app.state.dashboard_dir
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1913,31 +1884,6 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except requests.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"Error llamando webhook n8n: {exc}") from exc
-
-    @app.post("/api/actualizaciones/finalizar")
-    def finalizar_actualizacion(
-        payload: FinishRequest,
-        request: Request,
-        x_rtb_webhook_token: str | None = Header(default=None),
-    ) -> dict:
-        expected = request.app.state.coordinator.callback_token
-        if not expected or not x_rtb_webhook_token or not compare_digest(expected, x_rtb_webhook_token):
-            raise HTTPException(status_code=401, detail="Token de callback invalido")
-        try:
-            return request.app.state.coordinator.finalize_run(payload.run_id, payload.archivos)
-        except RunNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (InvalidRunError, FileNotFoundError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    @app.get("/api/actualizaciones/{run_id}")
-    def estado_actualizacion(run_id: str, request: Request) -> dict:
-        try:
-            return request.app.state.coordinator.get_run(run_id)
-        except (RunNotFoundError, KeyError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return app
 

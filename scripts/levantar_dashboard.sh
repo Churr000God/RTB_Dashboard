@@ -55,7 +55,6 @@ done
 printf 'Validando sintaxis Python dentro del contenedor...\n'
 docker compose exec -T dashboard-rtb python3 -m py_compile \
   rtb_web.py \
-  rtb_actualizacion.py \
   rtb_analisis.py || fail "fallo la compilacion Python"
 
 printf 'Ejecutando pruebas unitarias dentro del contenedor...\n'

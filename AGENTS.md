@@ -7,18 +7,16 @@ Este proyecto es el **dashboard web interactivo** que muestra cierres mensuales 
 1. `README.md` - stack, flujo y como correrlo.
 2. `contexto/RTB_REPORTE_ACTUAL.md` - diccionario de KPIs, columnas criticas del CSV.
 3. `rtb_analisis.py` - fuente de verdad de toda agregacion. Si el numero esta mal, esta aqui.
-4. `rtb_web.py` - endpoints HTTP + render de UI inline (HTML/CSS/JS embebidos). Las tarjetas KPI estan en `renderKpis`.
-5. `rtb_actualizacion.py` - coordinator del flujo async con callback de n8n.
+4. `rtb_web.py` - endpoints HTTP + render de UI inline (HTML/CSS/JS embebidos) + flujo sync del webhook. Las tarjetas KPI estan en `renderKpis`.
 
 ## Modulos activos
 
 | Archivo | Responsabilidad | Importado por |
 |---|---|---|
-| `rtb_web.py` | FastAPI app, endpoints, UI completa (HTML/JS inline), orquestacion sincrona del webhook | uvicorn (entry point) |
-| `rtb_actualizacion.py` | Coordinator de runs async, valida tokens de callback, gestiona estado de actualizaciones | `rtb_web.py` |
-| `rtb_analisis.py` | Parsing de CSV, KPIs, agregaciones temporales, signals/alertas | `rtb_web.py`, `rtb_actualizacion.py`, tests |
+| `rtb_web.py` | FastAPI app, endpoints, UI completa (HTML/JS inline), orquestacion sincrona del webhook a n8n | uvicorn (entry point) |
+| `rtb_analisis.py` | Parsing de CSV, KPIs, agregaciones temporales, signals/alertas | `rtb_web.py`, tests |
 
-No hay otros modulos Python a nivel raiz. Si encuentras referencias a `generar_reporte.py`, `rtb_html.py`, `rtb_markdown.py`, `chart.umd.min.js`, `01_analizar.py`, `diseno_paginas/`, `estructura_proyecto/` u "HTML estatico" en docs o comentarios, son rezagos del flujo viejo - borralos o reescribelos.
+No hay otros modulos Python a nivel raiz. Si encuentras referencias a `generar_reporte.py`, `rtb_html.py`, `rtb_markdown.py`, `chart.umd.min.js`, `01_analizar.py`, `rtb_actualizacion.py`, `diseno_paginas/`, `estructura_proyecto/`, `UpdateCoordinator`, `/api/actualizaciones/finalizar`, `RTB_CALLBACK_URL`, `RTB_CALLBACK_TOKEN`, u "HTML estatico" en docs o comentarios, son rezagos de flujos eliminados - borralos o reescribelos.
 
 ## Reglas de implementacion
 
@@ -33,7 +31,7 @@ No hay otros modulos Python a nivel raiz. Si encuentras referencias a `generar_r
 
 1. Tipos / compile:
    ```bash
-   docker compose exec -T dashboard-rtb python3 -m py_compile rtb_web.py rtb_analisis.py rtb_actualizacion.py
+   docker compose exec -T dashboard-rtb python3 -m py_compile rtb_web.py rtb_analisis.py
    ```
 2. Tests:
    ```bash

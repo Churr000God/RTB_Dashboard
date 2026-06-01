@@ -17,25 +17,24 @@ docker compose up -d --build
 
 Acceso: <http://localhost:8000>.
 
-Variables de entorno (opcionales, ver `.env.example`):
+Variables de entorno (ver `.env.example`; cargar via `.env` o exportar):
 
 | Variable | Default | Para que sirve |
 |---|---|---|
-| `RTB_CALLBACK_URL` | `http://localhost:8000/api/actualizaciones/finalizar` | URL del callback async (solo si usas el coordinator) |
-| `RTB_CALLBACK_TOKEN` | `cambiar-en-produccion` | Token compartido para validar callbacks de n8n |
+| `RTB_WEBHOOK_TEST_URL` | (vacio) | Webhook de n8n para ambiente `test` (la UI lo elige desde el dropdown) |
+| `RTB_WEBHOOK_PROD_URL` | (vacio) | Webhook de n8n para ambiente `prod` |
 | `RTB_CSV_WAIT_ATTEMPTS` | `300` | Cuantos intentos espera el dashboard al CSV nuevo despues del `ok` de n8n |
 | `RTB_CSV_WAIT_DELAY_SECONDS` | `1.0` | Segundos entre intento e intento |
 
-`RTB_CSV_WAIT_ATTEMPTS * RTB_CSV_WAIT_DELAY_SECONDS = espera total` (default 5 min). Subir si Nextcloud sincroniza lento.
+Sin las dos primeras, el endpoint `/api/actualizar-datos` devuelve `400` con un mensaje claro. `RTB_CSV_WAIT_ATTEMPTS * RTB_CSV_WAIT_DELAY_SECONDS = espera total` (default 5 min). Subir si Nextcloud sincroniza lento.
 
 ## Arquitectura runtime
 
 ```
 docker compose
   └─ dashboard-rtb (uvicorn rtb_web:app :8000)
-       ├─ rtb_web.py          - FastAPI app + UI (HTML/JS inline) + endpoints
-       ├─ rtb_actualizacion.py - Coordinator de runs async (flujo callback de n8n)
-       └─ rtb_analisis.py      - Fuente de verdad de KPIs (parseo CSV + agregaciones)
+       ├─ rtb_web.py     - FastAPI app + UI (HTML/JS inline) + endpoints + flujo sync de webhook
+       └─ rtb_analisis.py - Fuente de verdad de KPIs (parseo CSV + agregaciones)
 ```
 
 Volumenes montados desde el host:
@@ -89,8 +88,7 @@ bash scripts/levantar_dashboard.sh
 
 ```
 .
-├── rtb_web.py            # FastAPI app + UI
-├── rtb_actualizacion.py  # Coordinator async
+├── rtb_web.py            # FastAPI app + UI + flujo sync de webhook
 ├── rtb_analisis.py       # Calculos
 ├── Dockerfile
 ├── docker-compose.yml
@@ -98,8 +96,6 @@ bash scripts/levantar_dashboard.sh
 ├── scripts/
 │   └── levantar_dashboard.sh
 ├── tests/
-│   ├── test_actualizacion.py
-│   ├── test_actualizacion_api.py
 │   ├── test_temporal_reporting.py
 │   ├── test_ventas_dashboard.py
 │   ├── test_webhook_app.py
@@ -114,4 +110,6 @@ Las carpetas `data/`, `data_procesada/`, `reportes/` y `dashboard_data/` viven e
 
 ## Historial de limpieza
 
-Punto de partida del repo: eliminado el flujo CLI viejo (`01_analizar.py`, `generar_reporte.py`, `rtb_html.py`, `rtb_markdown.py`, `chart.umd.min.js`) y los docs que lo describian (`diseno_paginas/`, `estructura_proyecto/`). El dashboard web vigente NO depende de Chart.js externo ni de generacion de archivos HTML estaticos.
+- Eliminado el flujo CLI viejo (`01_analizar.py`, `generar_reporte.py`, `rtb_html.py`, `rtb_markdown.py`, `chart.umd.min.js`) y los docs que lo describian (`diseno_paginas/`, `estructura_proyecto/`).
+- Eliminado el flujo async de coordinator (`rtb_actualizacion.py`, endpoints `/api/actualizaciones/*`, vars `RTB_CALLBACK_URL`/`RTB_CALLBACK_TOKEN`). El dashboard ahora solo usa el flujo sincrono `POST /api/actualizar-datos`.
+- URLs de webhook movidas de codigo a env vars (`RTB_WEBHOOK_TEST_URL`, `RTB_WEBHOOK_PROD_URL`).
