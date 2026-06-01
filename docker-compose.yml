@@ -1,0 +1,14 @@
+services:
+  dashboard-rtb:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      RTB_CALLBACK_URL: "${RTB_CALLBACK_URL:-http://localhost:8000/api/actualizaciones/finalizar}"
+      RTB_CALLBACK_TOKEN: "${RTB_CALLBACK_TOKEN:-cambiar-en-produccion}"
+    volumes:
+      - ./data:/app/data
+      - ./data_procesada:/app/data_procesada
+      - ./dashboard_data:/app/dashboard_data
+    command: uvicorn rtb_web:app --host 0.0.0.0 --port 8000

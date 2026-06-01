@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Entorno local
+.env
+.env.local
+
+# Data y outputs (contienen informacion de negocio; nunca subir)
+data/
+data_procesada/
+reportes/
+dashboard_data/
+
+# Backups manuales
+*.backup.json
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Tooling local
+.claude/
+.superpowers/
