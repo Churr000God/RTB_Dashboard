@@ -7,6 +7,8 @@ services:
       PYTHONUNBUFFERED: "1"
       RTB_CALLBACK_URL: "${RTB_CALLBACK_URL:-http://localhost:8000/api/actualizaciones/finalizar}"
       RTB_CALLBACK_TOKEN: "${RTB_CALLBACK_TOKEN:-cambiar-en-produccion}"
+      RTB_WEBHOOK_TEST_URL: "${RTB_WEBHOOK_TEST_URL:-}"
+      RTB_WEBHOOK_PROD_URL: "${RTB_WEBHOOK_PROD_URL:-}"
     volumes:
       - ./data:/app/data
       - ./data_procesada:/app/data_procesada

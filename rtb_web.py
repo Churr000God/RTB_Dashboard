@@ -22,8 +22,8 @@ from rtb_actualizacion import InvalidRunError, RunNotFoundError, UpdateCoordinat
 
 
 WEBHOOK_URLS = {
-    "test": "https://sistemas-rtb.app.n8n.cloud/webhook-test/0003d589-aa54-49f3-b7de-65f675685fc0",
-    "prod": "https://sistemas-rtb.app.n8n.cloud/webhook/0003d589-aa54-49f3-b7de-65f675685fc0",
+    "test": os.getenv("RTB_WEBHOOK_TEST_URL", ""),
+    "prod": os.getenv("RTB_WEBHOOK_PROD_URL", ""),
 }
 
 HTTP_TIMEOUT_SECONDS = 900
@@ -67,7 +67,13 @@ def resolve_webhook_url(ambiente: str) -> str:
     normalized = ambiente.strip().lower()
     if normalized not in WEBHOOK_URLS:
         raise ValueError("ambiente invalido; usa test o prod")
-    return WEBHOOK_URLS[normalized]
+    url = WEBHOOK_URLS[normalized]
+    if not url:
+        raise ValueError(
+            f"webhook url no configurada para '{normalized}'; "
+            f"define RTB_WEBHOOK_{normalized.upper()}_URL en el entorno"
+        )
+    return url
 
 
 def validate_request(ambiente: str, fecha_desde: str, fecha_hasta: str) -> tuple[str, datetime, datetime]:

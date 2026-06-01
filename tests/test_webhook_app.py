@@ -30,34 +30,38 @@ class WebhookContractTests(unittest.TestCase):
             validate_request("staging", "2026-04-01", "2026-04-30")
 
     def test_selects_test_webhook_url(self):
-        from rtb_web import resolve_webhook_url
+        import rtb_web
 
-        self.assertEqual(
-            resolve_webhook_url("test"),
-            "https://sistemas-rtb.app.n8n.cloud/webhook-test/0003d589-aa54-49f3-b7de-65f675685fc0",
-        )
+        with patch.dict(rtb_web.WEBHOOK_URLS, {"test": "https://stub.example/webhook-test"}):
+            self.assertEqual(rtb_web.resolve_webhook_url("test"), "https://stub.example/webhook-test")
 
     def test_selects_production_webhook_url(self):
-        from rtb_web import resolve_webhook_url
+        import rtb_web
 
-        self.assertEqual(
-            resolve_webhook_url("prod"),
-            "https://sistemas-rtb.app.n8n.cloud/webhook/0003d589-aa54-49f3-b7de-65f675685fc0",
-        )
+        with patch.dict(rtb_web.WEBHOOK_URLS, {"prod": "https://stub.example/webhook"}):
+            self.assertEqual(rtb_web.resolve_webhook_url("prod"), "https://stub.example/webhook")
+
+    def test_rejects_when_webhook_url_not_configured(self):
+        import rtb_web
+
+        with patch.dict(rtb_web.WEBHOOK_URLS, {"test": ""}):
+            with self.assertRaisesRegex(ValueError, "webhook url no configurada"):
+                rtb_web.resolve_webhook_url("test")
 
     @patch("rtb_web.requests.post")
     def test_post_update_calls_requests_with_selected_url_and_payload(self, post):
-        from rtb_web import call_webhook
+        import rtb_web
 
         post.return_value.status_code = 200
         post.return_value.text = '{"ok": true}'
         post.return_value.headers = {"content-type": "application/json"}
         post.return_value.json.return_value = {"ok": True}
 
-        result = call_webhook("test", "2026-04-01", "2026-04-30")
+        with patch.dict(rtb_web.WEBHOOK_URLS, {"test": "https://stub.example/webhook-test"}):
+            result = rtb_web.call_webhook("test", "2026-04-01", "2026-04-30")
 
         post.assert_called_once_with(
-            "https://sistemas-rtb.app.n8n.cloud/webhook-test/0003d589-aa54-49f3-b7de-65f675685fc0",
+            "https://stub.example/webhook-test",
             json=[{"after": "2026-04-01"}, {"before": "2026-04-30"}],
             timeout=900,
         )
