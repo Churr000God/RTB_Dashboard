@@ -1375,7 +1375,6 @@ def render_index() -> str:
         { label: 'Mediana',       value: `${stats.mediana} días`,             color: '#159895' },
         { label: 'Máximo',        value: `${stats.maximo} días`,              color: '#d96058' },
         { label: 'Con datos',     value: formatNumber(stats.n_con_datos),     color: '#5b6673' },
-        { label: 'Sin fechas',    value: formatNumber(stats.n_sin_fechas),    color: stats.n_sin_fechas > 0 ? '#d0b56b' : '#a0b0bb' },
       ].map((k) => `<div class="tiempos-kpi" style="border-left-color:${k.color}"><strong style="color:${k.color}">${escapeHtml(k.value)}</strong><span>${escapeHtml(k.label)}</span></div>`).join('');
 
       const rangoColors = { 'Mismo día': '#57c5b6', '1-3 días': '#159895', '4-7 días': '#d0b56b', '>7 días': '#d96058' };
