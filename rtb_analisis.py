@@ -841,6 +841,162 @@ def build_ventas_dashboard(cot, period_label="Periodo actual", fecha_desde=None,
         "signals": signals,
     }
 
+def _norm_fc_row(row):
+    """Normaliza una fila de Facturas_Compras a estructura unificada.
+    Soporta el formato antiguo (property_*) y el nuevo (Factura_compra_*)."""
+    if "Factura_compra_subtotal" in row:
+        sub = f(row.get("Factura_compra_subtotal", 0))
+        iva = f(row.get("Fcatura_compra_iva", 0))       # typo en export n8n
+        env = f(row.get("Factura_compra_envio", 0))
+        tot = f(row.get("Factura_compra_total", 0)) or sub + iva + env
+        return {
+            "nombre": row.get("Factura_compra_nombre", ""),
+            "sub": sub, "iva": iva, "env": env, "tot": tot,
+            "fecha": row.get("Facatura_compra_fecha_factura", ""),  # typo en export n8n
+            "tipo_pago": parse_tp(row.get("Factura_compra_tipo", "")),
+            "cfdi": (row.get("Factura_compra_uso_cfdi", "") or "Sin CFDI").strip() or "Sin CFDI",
+            "status_pago": (row.get("Factura_compra_estatus_factura", "") or "Sin status").strip() or "Sin status",
+            "fecha_pago": "",
+        }
+    sub = f(row.get("property_subtotal_f", 0))
+    iva = f(row.get("property_iva_16", 0))
+    env = f(row.get("property_costo_de_envio", 0))
+    return {
+        "nombre": row.get("name", ""),
+        "sub": sub, "iva": iva, "env": env, "tot": sub + iva + env,
+        "fecha": row.get("property_fecha_de_factura.start", ""),
+        "tipo_pago": parse_tp(row.get("property_tipo_de_pago.0", "")),
+        "cfdi": (row.get("property_uso_cfdi", "") or "Sin CFDI").strip() or "Sin CFDI",
+        "status_pago": (row.get("property_status_de_pago", "") or "Sin status").strip() or "Sin status",
+        "fecha_pago": row.get("property_fecha_de_pago", ""),
+    }
+
+
+def build_compras_dashboard(fc, fcp, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d = _e.date() if _e else None
+
+    def in_period_d(fecha_str):
+        dt = parse_date(fecha_str)
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    fc_norm  = [_norm_fc_row(r) for r in fc  if in_period_d(_norm_fc_row(r)["fecha"])]
+    fcp_norm = [_norm_fc_row(r) for r in fcp if in_period_d(_norm_fc_row(r)["fecha"])]
+
+    # Totales facturas compras
+    n_fc   = len(fc_norm)
+    sub_fc = round(sum(r["sub"] for r in fc_norm), 2)
+    iva_fc = round(sum(r["iva"] for r in fc_norm), 2)
+    tot_fc = round(sum(r["tot"] for r in fc_norm), 2)
+
+    # Totales pagadas
+    n_fcp   = len(fcp_norm)
+    sub_fcp = round(sum(r["sub"] for r in fcp_norm), 2)
+    tot_fcp = round(sum(r["tot"] for r in fcp_norm), 2)
+
+    # Status de pago
+    sp_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in fc_norm:
+        sp_fc[r["status_pago"]]["n"] += 1
+        sp_fc[r["status_pago"]]["m"] += r["tot"]
+
+    no_pag   = [r for r in fc_norm if r["status_pago"] == "No Pagado"]
+    n_no_pag = len(no_pag)
+    cxp      = round(sp_fc.get("No Pagado", {"m": 0.0})["m"], 2)
+
+    # Tipo de pago
+    tp_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in fc_norm:
+        tp_fc[r["tipo_pago"] or "Sin tipo"]["n"] += 1
+        tp_fc[r["tipo_pago"] or "Sin tipo"]["m"] += r["tot"]
+
+    # Top 10 proveedores
+    prov_fc = defaultdict(lambda: {"n": 0, "sub": 0.0, "tot": 0.0})
+    for r in fc_norm:
+        p = prov_name(r["nombre"])
+        prov_fc[p]["n"] += 1
+        prov_fc[p]["sub"] += r["sub"]
+        prov_fc[p]["tot"] += r["tot"]
+    top_prov = sorted(prov_fc.items(), key=lambda x: -x[1]["tot"])[:10]
+
+    # Crédito vivo
+    cred_vivo_acc = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in no_pag:
+        p = prov_name(r["nombre"])
+        cred_vivo_acc[p]["n"] += 1
+        cred_vivo_acc[p]["m"] += r["tot"]
+    cred_vivo = sorted(cred_vivo_acc.items(), key=lambda x: -x[1]["m"])[:10]
+
+    # Top 10 proveedores pagados
+    prov_fcp = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in fcp_norm:
+        p = prov_name(r["nombre"])
+        prov_fcp[p]["n"] += 1
+        prov_fcp[p]["m"] += r["tot"]
+    top_prov_pag = sorted(prov_fcp.items(), key=lambda x: -x[1]["m"])[:10]
+
+    # Días factura→pago (solo si el row tiene fecha_pago, formato antiguo)
+    t_fc_pago = []
+    for r in fcp_norm:
+        if not r["fecha_pago"]: continue
+        df = parse_date(r["fecha"])
+        dp = parse_date(r["fecha_pago"])
+        d = days_diff(df, dp)
+        if d is not None and d < 365:
+            t_fc_pago.append(d)
+
+    # Temporal — usa filas originales para que aggregate_temporal maneje el date_getter
+    temporal = aggregate_temporal(
+        fc_norm,
+        date_getter=lambda row: row["fecha"],
+        metric_getters={
+            "n":   lambda row: 1,
+            "sub": lambda row: row["sub"],
+            "tot": lambda row: row["tot"],
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "n":   linear_trend([p["n"]   for p in periods]),
+        "sub": linear_trend([p["sub"] for p in periods]),
+        "tot": linear_trend([p["tot"] for p in periods]),
+    }
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "n_fc": n_fc,
+            "sub_fc": sub_fc,
+            "iva_fc": iva_fc,
+            "tot_fc": tot_fc,
+            "n_fcp": n_fcp,
+            "sub_fcp": sub_fcp,
+            "tot_fcp": tot_fcp,
+            "cxp": cxp,
+            "n_no_pag": n_no_pag,
+            "t_pago_avg": round(avg(t_fc_pago), 1),
+            "t_pago_med": round(med(t_fc_pago), 1),
+            "t_pago_max": max(t_fc_pago) if t_fc_pago else 0,
+            "pct_pagado": round(tot_fcp / tot_fc, 4) if tot_fc else 0,
+        },
+        "series": {
+            "temporal": temporal,
+            "status_pago": [{"status": k, **v} for k, v in sp_fc.items()],
+            "tipo_pago": [{"tipo": k, **v} for k, v in tp_fc.items()],
+        },
+        "tables": {
+            "top_proveedores": [{"proveedor": k, **v} for k, v in top_prov],
+            "credito_vivo": [{"proveedor": k, **v} for k, v in cred_vivo],
+            "top_proveedores_pag": [{"proveedor": k, **v} for k, v in top_prov_pag],
+        },
+    }
+
 # ─── Lectura ────────────────────────────────────────────────────────────────
 def load_all(data_dir="data", allowed_files=None):
     prefixes = {
