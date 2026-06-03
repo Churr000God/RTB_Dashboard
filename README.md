@@ -41,7 +41,43 @@ Volumenes montados desde el host:
 
 - `./data` -> `/app/data` (drop-in de CSVs nuevos)
 - `./data_procesada` -> `/app/data_procesada` (archivo historico de CSVs ya consumidos)
-- `./dashboard_data` -> `/app/dashboard_data` (snapshot `ventas_latest.json` que sirve la API)
+- `./dashboard_data` -> `/app/dashboard_data` (snapshots `ventas_latest.json` y `facturacion_latest.json` que sirven las APIs)
+
+### Rutas locales en produccion
+
+`docker-compose.yml` se mantiene versionado sin cambios locales. Si el servidor
+de produccion usa rutas absolutas distintas, crear un
+`docker-compose.override.yml` local a partir del ejemplo:
+
+```bash
+cp docker-compose.override.example.yml docker-compose.override.yml
+```
+
+Editar solamente los tres paths del lado izquierdo de cada volumen. El archivo
+real esta ignorado por Git y Docker Compose lo carga automaticamente, por lo que
+los comandos normales siguen funcionando:
+
+```bash
+docker compose config
+docker compose up -d --build
+```
+
+Antes de actualizar un servidor que todavia tenga rutas locales editadas
+directamente en `docker-compose.yml`, respaldar ese archivo fuera del repo,
+pasar las rutas al override y restaurar la version del repositorio:
+
+```bash
+cp docker-compose.yml /tmp/docker-compose.yml.backup
+cp docker-compose.override.example.yml docker-compose.override.yml
+# Editar docker-compose.override.yml con las rutas del backup
+git restore docker-compose.yml
+git pull --ff-only origin main
+docker compose config
+docker compose up -d --build
+```
+
+Revisar la salida de `docker compose config` antes del rebuild: los `source` de
+los tres volumes deben apuntar a las rutas reales del servidor.
 
 ## Flujo de actualizacion
 
@@ -51,11 +87,12 @@ Disparado desde el formulario del dashboard (`POST /api/actualizar-datos`):
 2. `call_webhook` -> POST sincrono al webhook de n8n cloud.
 3. `validate_webhook_success` exige HTTP 2xx y body `{"ok": true}`.
 4. `publish_ventas_snapshot` (`rtb_web.py:180`) espera hasta `RTB_CSV_WAIT_ATTEMPTS` segundos a que aparezca un `Cotizaciones_*.csv` nuevo en `data/` (lo deja Nextcloud).
-5. `build_ventas_dashboard` (`rtb_analisis.py`) calcula KPIs.
-6. CSV se mueve a `data_procesada/<timestamp>_ventas/`.
-7. Snapshot se escribe atomicamente en `dashboard_data/ventas_latest.json`.
+5. Si existen los tres exports requeridos, `build_facturacion_dashboard` calcula y publica `dashboard_data/facturacion_latest.json`.
+6. `build_ventas_dashboard` (`rtb_analisis.py`) calcula KPIs comerciales.
+7. CSV de cotizaciones se mueve a `data_procesada/<timestamp>_ventas/`.
+8. Snapshot comercial se escribe atomicamente en `dashboard_data/ventas_latest.json`.
 
-El frontend recarga y consume `GET /api/dashboard/ventas`.
+El frontend recarga y consume `GET /api/dashboard/ventas` y `GET /api/dashboard/facturacion`.
 
 ## KPIs principales
 
@@ -66,9 +103,35 @@ Grupos visibles en la UI:
 - Cotizaciones / Aprobadas / Conversion (cantidad y monto)
 - Ariba cotizado / Ariba aprobado / Ariba conversion (subset filtrado por flag `Ariba`)
 - Tiempos de aprobacion (promedio, mediana, maximo, histograma 0-7+ dias)
-- Comportamiento temporal (semanal o mensual segun rango)
+- Comportamiento temporal (semanal o mensual segun rango; ver regla abajo)
 - Top clientes cotizan / aprueban
 - Tipos de pago
+
+## Granularidad temporal automatica
+
+La funcion `temporal_axis` (`rtb_analisis.py`) detecta automaticamente si mostrar semanas o meses:
+
+- `fecha_desde` y `fecha_hasta` en el **mismo mes** → `granularidad=semana` (S1 1-7, S2 8-14, S3 15-21, S4 22-28, S5 29-fin)
+- `fecha_desde` y `fecha_hasta` en **meses distintos** → `granularidad=mes` (una barra por mes calendario)
+
+`aggregate_temporal` filtra los registros al rango exacto antes de asignarlos al bucket, usando comparacion de fecha sin hora (`.date()`). Esto garantiza que:
+
+1. Un CSV con datos de 3 meses consultado en modo semanal (un solo mes) no mezcla registros de otros meses en S1-S5.
+2. Registros creados a las 23:59 del ultimo dia del rango no quedan excluidos por la comparacion datetime vs medianoche.
+
+## Facturacion
+
+La pestaña `Facturación` combina tres exports: `Cotizaciones_*.csv`,
+`Facturas_*.csv` y `Facturas_Secundarias_*.csv`. El snapshot independiente
+`dashboard_data/facturacion_latest.json` evita acoplar la vista a Ventas.
+
+Reglas principales:
+
+- Una factura vigente requiere aprobación, folio y fecha de facturación.
+- Las canceladas se excluyen del monto vigente y se muestran aparte.
+- `Monto_primer_factura` o `Monto_segunda_factura` sustituyen a `Total` cuando tienen valor.
+- Un mismo `Factura_id` no se duplica entre exports principal y secundario.
+- El rezago estimado suma cotizaciones aprobadas sin factura vigente asociada.
 
 ## Tests
 
@@ -107,6 +170,20 @@ bash scripts/levantar_dashboard.sh
 ```
 
 Las carpetas `data/`, `data_procesada/`, `reportes/` y `dashboard_data/` viven en el host pero estan ignoradas en git (contienen datos de negocio).
+
+## Historial de correcciones
+
+### 2026-06-03 — Granularidad y filtrado de fechas (`rtb_analisis.py`)
+
+**`aggregate_temporal` no filtraba por rango en modo semanal.** Con granularidad `semana`, S1-S5 no codifican el mes. Si el CSV contiene datos de varios meses pero el rango pedido es un solo mes, los registros de los otros meses caian en los mismos buckets. Fix: filtrar por `dt.date()` antes de asignar al bucket.
+
+**Corte por hora en `fecha_hasta`.** `parse_date('2026-06-03')` devuelve medianoche; registros con hora `2026-06-03T21:14Z` eran mayores y quedaban excluidos. Fix: comparar `.date()` en ambos lados en `aggregate_temporal` e `in_period`.
+
+**Facturación solo procesaba un mes cuando el CSV tenia varios.** Causa: el snapshot se habia generado con `fecha_hasta` incorrecto (fin de mes en lugar de fecha real). Fix: regenerar via `POST /api/regenerar-snapshot` con las fechas correctas copiando los CSVs de `data_procesada/` de vuelta a `data/`.
+
+**`render_index` tenia payload de ejemplo hardcodeado a abril 2026.** Fix: calcula dinamicamente `hoy` y `primer dia de hace 2 meses`.
+
+---
 
 ## Historial de limpieza
 

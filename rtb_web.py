@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from rtb_analisis import build_ventas_dashboard, load_cotizaciones, read_csv
+from rtb_analisis import build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, load_cotizaciones, read_csv
 
 
 WEBHOOK_URLS = {
@@ -28,6 +28,7 @@ WEBHOOK_URLS = {
 
 HTTP_TIMEOUT_SECONDS = 900
 SALES_SNAPSHOT_FILENAME = "ventas_latest.json"
+FACTURACION_SNAPSHOT_FILENAME = "facturacion_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
@@ -132,6 +133,56 @@ def snapshot_cotizaciones(data_dir: str | Path) -> dict[str, tuple[int, int]]:
     }
 
 
+def snapshot_facturas(data_dir: str | Path) -> dict[str, tuple[int, int]]:
+    root = Path(data_dir)
+    if not root.exists():
+        return {}
+    return {
+        path.name: (path.stat().st_mtime_ns, path.stat().st_size)
+        for path in root.glob("Facturas*.csv")
+        if path.is_file()
+    }
+
+
+def wait_for_changed_facturas(
+    data_dir: str | Path,
+    before: dict[str, tuple[int, int]],
+    sleep: Callable[[float], None] = sleep_seconds,
+    attempts: int = CSV_WAIT_ATTEMPTS,
+    delay_seconds: float = CSV_WAIT_DELAY_SECONDS,
+    quiesce_seconds: float = 8.0,
+) -> None:
+    """Espera hasta que los archivos de Facturas en data/ se estabilicen.
+
+    Primero espera a que al menos un archivo cambie vs. `before`.
+    Luego espera `quiesce_seconds` adicionales sin nuevos cambios para
+    asegurarse de que n8n terminó de descargar todos los archivos.
+    """
+    root = Path(data_dir)
+    # Fase 1: esperar el primer cambio
+    for attempt in range(attempts):
+        after = snapshot_facturas(root)
+        if any(before.get(name) != fp for name, fp in after.items()):
+            break
+        if attempt == attempts - 1:
+            return  # best-effort
+        sleep(delay_seconds)
+    # Fase 2: estabilización — esperar hasta que no lleguen archivos nuevos
+    quiesce_attempts = max(1, int(quiesce_seconds / delay_seconds))
+    stable_count = 0
+    prev = snapshot_facturas(root)
+    for _ in range(quiesce_attempts * 3):
+        sleep(delay_seconds)
+        curr = snapshot_facturas(root)
+        if curr == prev:
+            stable_count += 1
+            if stable_count >= quiesce_attempts:
+                return
+        else:
+            stable_count = 0
+            prev = curr
+
+
 def find_changed_cotizaciones(data_dir: str | Path, before: dict[str, tuple[int, int]]) -> Path:
     root = Path(data_dir)
     after = snapshot_cotizaciones(root)
@@ -176,25 +227,52 @@ def archive_ventas_csv(
     return destination
 
 
+def archive_data_dir(
+    data_dir: str | Path,
+    processed_dir: str | Path,
+    archived_at: datetime | None = None,
+) -> list[str]:
+    """Mueve TODOS los CSV de data/ a una sola subcarpeta en data_procesada/.
+
+    Devuelve la lista de nombres de archivos archivados.
+    """
+    root = Path(data_dir)
+    proc = Path(processed_dir)
+    archive_time = archived_at or datetime.now(LOCAL_TIMEZONE)
+    timestamp = archive_time.strftime("%Y-%m-%d_%H-%M-%S")
+    candidates = [p for p in root.glob("*.csv") if p.is_file()]
+    if not candidates:
+        return []
+    destination_dir = proc / f"{timestamp}_datos"
+    suffix = 1
+    while destination_dir.exists():
+        destination_dir = proc / f"{timestamp}_datos_{suffix}"
+        suffix += 1
+    destination_dir.mkdir(parents=True)
+    archived = []
+    for src in sorted(candidates, key=lambda p: p.name):
+        shutil.move(str(src), str(destination_dir / src.name))
+        archived.append(src.name)
+    return archived
+
+
 def publish_ventas_snapshot(
     data_dir: str | Path,
     dashboard_dir: str | Path,
-    processed_dir: str | Path,
     before: dict[str, tuple[int, int]],
     fecha_desde: str,
     fecha_hasta: str,
+    csv_path: str | Path | None = None,
 ) -> dict:
-    csv_path = wait_for_changed_cotizaciones(data_dir, before)
+    csv_path = Path(csv_path) if csv_path else wait_for_changed_cotizaciones(data_dir, before)
     period_label = f"{fecha_desde} a {fecha_hasta}"
     ventas = build_ventas_dashboard(
         read_csv(csv_path), period_label=period_label, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta
     )
-    archived_path = archive_ventas_csv(csv_path, processed_dir)
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
         "file": csv_path.name,
-        "processed_file": str(archived_path),
         "dashboard": {"ventas": ventas},
     }
     atomic_write_json(Path(dashboard_dir) / SALES_SNAPSHOT_FILENAME, snapshot)
@@ -222,8 +300,74 @@ def load_dashboard_payload(data_dir: str = "data", dashboard_dir: str = "dashboa
     )
 
 
+
+def find_latest_facturacion_csv(data_dir: str | Path, prefix: str) -> Path:
+    root = Path(data_dir)
+    matches = [
+        path for path in root.glob(f"{prefix}*.csv")
+        if path.is_file() and not (prefix == "Facturas_" and path.name.startswith("Facturas_Secundarias_"))
+    ]
+    if not matches:
+        raise FileNotFoundError(f"No se encontro {prefix}*.csv en la carpeta de datos: {root.resolve()}")
+    return max(matches, key=lambda path: (path.stat().st_mtime_ns, path.name))
+
+
+def load_facturacion_exports(data_dir: str | Path) -> tuple[Path, Path, Path]:
+    return (
+        Path(find_latest_csv(data_dir, "Cotizaciones")),
+        find_latest_facturacion_csv(data_dir, "Facturas_"),
+        find_latest_facturacion_csv(data_dir, "Facturas_Secundarias_"),
+    )
+
+
+def publish_facturacion_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+    cot_path: str | Path | None = None,
+) -> dict:
+    default_cot_path, principales_path, secundarias_path = load_facturacion_exports(data_dir)
+    cot_path = Path(cot_path) if cot_path else default_cot_path
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    facturacion = build_facturacion_dashboard(
+        read_csv(cot_path),
+        read_csv(principales_path),
+        read_csv(secundarias_path),
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": {
+            "cotizaciones": cot_path.name,
+            "principales": principales_path.name,
+            "secundarias": secundarias_path.name,
+        },
+        "dashboard": {"facturacion": facturacion},
+    }
+    atomic_write_json(Path(dashboard_dir) / FACTURACION_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_facturacion_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snapshot_path = Path(dashboard_dir) / FACTURACION_SNAPSHOT_FILENAME
+    if snapshot_path.exists():
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))["dashboard"]["facturacion"]
+    cot_path, principales_path, secundarias_path = load_facturacion_exports(data_dir)
+    return build_facturacion_dashboard(read_csv(cot_path), read_csv(principales_path), read_csv(secundarias_path))
+
+
 def render_index() -> str:
-    test_payload = build_payload("2026-04-01", "2026-04-30")
+    today = datetime.now()
+    _end = today.strftime("%Y-%m-%d")
+    _sm, _sy = today.month - 2, today.year
+    if _sm <= 0:
+        _sm += 12; _sy -= 1
+    _start = f"{_sy}-{_sm:02d}-01"
+    test_payload = build_payload(_start, _end)
     payload_text = escape(_json_preview(test_payload))
     return """<!doctype html>
 <html lang="es">
@@ -287,7 +431,7 @@ def render_index() -> str:
     .module-tab:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(208,181,107,.22); }
     .module-tab.active { border-color: var(--sidebar); background: var(--sidebar); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
     .canvas { min-height: calc(100vh - 104px); border: 1px dashed #c8d2dc; border-radius: 10px; background: var(--paper); padding: 16px; }
-    .ventas-panel[hidden] { display: none; }
+    .ventas-panel[hidden], .facturacion-panel[hidden] { display: none; }
     .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap: 12px; align-items: stretch; }
     .kpi-card { position: relative; isolation: isolate; overflow: hidden; min-height: 146px; border: 1px solid #d8e3ea; border-radius: 8px; background: #fbfcfd; padding: 14px; display: grid; gap: 12px; box-shadow: 0 8px 22px rgba(34,94,115,.06); transition: transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out; }
     .kpi-card:hover { transform: translateY(-2px); border-color: rgba(21,152,149,.38); box-shadow: 0 14px 34px rgba(34,94,115,.13); }
@@ -305,7 +449,24 @@ def render_index() -> str:
     .kpi-card.primary { border-color: rgba(21,152,149,.38); background: #f0faf9; }
     .kpi-card.accent { border-color: rgba(208,181,107,.45); background: #fffaf0; }
     .kpi-card.warning .kpi-delta .kpi-value { color: #a45131; }
-    .ventas-panel { display: grid; gap: 14px; }
+    .kpi-card.warning { border-color: rgba(217,96,88,.35); background: #fff5f4; }
+    .facturacion-kpi-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .facturacion-kpi-grid > .kpi-card { grid-column: span 2; }
+    .facturacion-kpi-grid > .kpi-card:nth-child(4) { grid-column: 2 / span 2; }
+    .facturacion-kpi-grid > .kpi-card:nth-child(5) { grid-column: 4 / span 2; }
+    @media (max-width: 1180px) {
+      .facturacion-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .facturacion-kpi-grid > .kpi-card,
+      .facturacion-kpi-grid > .kpi-card:nth-child(4),
+      .facturacion-kpi-grid > .kpi-card:nth-child(5) { grid-column: auto; }
+    }
+    @media (max-width: 920px) {
+      .facturacion-kpi-grid { grid-template-columns: 1fr; }
+    }
+    .ventas-panel, .facturacion-panel { display: grid; gap: 14px; }
+    .facturacion-alerts { display: flex; flex-wrap: wrap; gap: 8px; }
+    .facturacion-alert { border: 1px solid #ead7a2; border-radius: 999px; background: #fff8e6; color: #7a5c00; padding: 5px 9px; font-size: 12px; font-weight: 720; }
+    .ciclo-chart-wrap { min-width: 0; height: 220px; }
     .status-section { border: 1px solid #d8e3ea; border-radius: 8px; background: #fbfcfd; padding: 14px; box-shadow: 0 8px 22px rgba(34,94,115,.06); }
     .section-title { margin: 0 0 8px; color: var(--sidebar-2); font-size: 13px; line-height: 1.2; font-weight: 840; letter-spacing: .45px; text-transform: uppercase; }
     .section-subtitle { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
@@ -430,6 +591,7 @@ def render_index() -> str:
           </select>
         </div>
         <button id="submitButton" type="submit">Activar webhook</button>
+        <button id="regenerarButton" type="button" style="margin-top:8px;width:100%;background:#159895;border:none;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;font-size:.85rem;font-weight:600;opacity:.9;" title="Regenera los snapshots con los archivos ya descargados en data/, sin llamar a n8n. Útil cuando el webhook falla pero los archivos sí llegaron.">Regenerar con archivos actuales</button>
       </form>
 
       <section class="status-card" aria-live="polite">
@@ -449,6 +611,7 @@ def render_index() -> str:
     <section class="main">
       <nav class="module-bar" aria-label="Modulos del dashboard">
         <button class="module-tab active" type="button" data-module="ventas" aria-current="page">Ventas</button>
+        <button class="module-tab" type="button" data-module="facturacion">Facturación</button>
         <button class="module-tab" type="button" data-module="operacion">Operacion</button>
         <button class="module-tab" type="button" data-module="compras">Compras</button>
         <button class="module-tab" type="button" data-module="inventario">Inventario</button>
@@ -612,6 +775,91 @@ def render_index() -> str:
             </div>
           </section>
         </section>
+        <section id="facturacionPanel" class="facturacion-panel" aria-label="KPIs de facturación" hidden>
+          <div class="kpi-grid facturacion-kpi-grid" id="facturacionKpiGrid">
+            <p class="panel-state">Cargando facturación...</p>
+          </div>
+          <section class="status-section" id="facturacionEstadoSection">
+            <h2 class="section-title">Estado de facturación</h2>
+            <p class="section-subtitle">Facturas vigentes del periodo, sin duplicar registros secundarios repetidos.</p>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Estado</th><th>Qty</th><th>Monto</th><th>% qty</th><th>% monto</th></tr></thead>
+                  <tbody id="facturacionEstadoRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="facturacionEstadoPie" width="520" height="520" aria-label="Gráfica de dona por monto y estado de factura"></canvas>
+                  <div class="pie-center" id="facturacionEstadoPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="chart-tooltip" id="facturacionEstadoTooltip" hidden></div>
+                <div class="pie-legend" id="facturacionEstadoLegend"></div>
+              </div>
+            </div>
+          </section>
+          <section class="status-section">
+            <h2 class="section-title">Comportamiento temporal</h2>
+            <p class="section-subtitle">Facturas vigentes por fecha de facturación.</p>
+            <div class="weekly-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Periodo</th><th>Qty</th><th>Monto facturado</th></tr></thead>
+                  <tbody id="facturacionTemporalRows"></tbody>
+                  <tfoot id="facturacionTemporalTotals"></tfoot>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="factTemporalVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="factTemporalVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="facturacionTemporalChart" width="760" height="420" aria-label="Gráfica de barras y tendencia de facturas vigentes por periodo"></canvas>
+                  <div class="chart-tooltip" id="facturacionTemporalTooltip" hidden></div>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-chip"><span class="legend-swatch" style="--status-color:#159895"></span><span id="factTemporalLegendBar">Monto facturado</span></span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#159895"></span><span id="factTemporalLegendTend">Tendencia monto</span></span>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="status-section" id="cicloSection">
+            <h2 class="section-title">Ciclo de Facturación Completo</h2>
+            <p class="section-subtitle">Días promedio por etapa: Pedido aprobado → Factura emitida → Validada por cliente → Asociada al complemento de pago SAT.</p>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Etapa</th><th>Promedio</th><th>Mediana</th><th>Máximo</th><th>N</th></tr></thead>
+                  <tbody id="cicloEtapasRows"></tbody>
+                </table>
+              </div>
+              <div class="ciclo-chart-wrap">
+                <canvas class="weekly-chart" id="cicloEtapasChart" width="560" height="280" aria-label="Gráfica de barras de días promedio por etapa del ciclo de facturación"></canvas>
+                <div class="chart-tooltip" id="cicloEtapasTooltip" hidden></div>
+              </div>
+            </div>
+            <p class="section-subtitle" style="margin-top:14px">Evolución del ciclo total promedio por periodo.</p>
+            <div class="weekly-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Periodo</th><th>Ciclo total (días)</th></tr></thead>
+                  <tbody id="cicloTemporalRows"></tbody>
+                </table>
+              </div>
+              <div class="weekly-chart-wrap">
+                <canvas class="weekly-chart" id="cicloTemporalChart" width="760" height="320" aria-label="Gráfica de evolución del ciclo total por periodo"></canvas>
+                <div class="chart-tooltip" id="cicloTemporalTooltip" hidden></div>
+              </div>
+            </div>
+          </section>
+          <section class="status-section">
+            <h2 class="section-title">Alertas operativas</h2>
+            <div class="facturacion-alerts" id="facturacionAlerts"></div>
+          </section>
+        </section>
       </div>
     </section>
   </main>
@@ -619,6 +867,7 @@ def render_index() -> str:
   <script>
     const form = document.querySelector('#updateForm');
     const submitButton = document.querySelector('#submitButton');
+    const regenerarButton = document.querySelector('#regenerarButton');
     const downloadOverlay = document.querySelector('#downloadOverlay');
     const statusBadge = document.querySelector('#statusBadge');
     const statusDetail = document.querySelector('#statusDetail');
@@ -626,6 +875,30 @@ def render_index() -> str:
     const moduleTabs = document.querySelectorAll('.module-tab');
     const canvas = document.querySelector('.canvas');
     const ventasPanel = document.querySelector('#ventasPanel');
+    const facturacionPanel = document.querySelector('#facturacionPanel');
+    const facturacionKpiGrid = document.querySelector('#facturacionKpiGrid');
+    const facturacionEstadoSection = document.querySelector('#facturacionEstadoSection');
+    const facturacionEstadoRows = document.querySelector('#facturacionEstadoRows');
+    const facturacionEstadoPie = document.querySelector('#facturacionEstadoPie');
+    const facturacionEstadoPieCenter = document.querySelector('#facturacionEstadoPieCenter');
+    const facturacionEstadoTooltip = document.querySelector('#facturacionEstadoTooltip');
+    const facturacionEstadoLegend = document.querySelector('#facturacionEstadoLegend');
+    const facturacionTemporalRows = document.querySelector('#facturacionTemporalRows');
+    const facturacionTemporalChart = document.querySelector('#facturacionTemporalChart');
+    const facturacionTemporalTooltip = document.querySelector('#facturacionTemporalTooltip');
+    const facturacionTemporalTotals = document.querySelector('#facturacionTemporalTotals');
+    const factTemporalVistaMonto = document.querySelector('#factTemporalVistaMonto');
+    const factTemporalVistaCantidad = document.querySelector('#factTemporalVistaCantidad');
+    const factTemporalLegendBar = document.querySelector('#factTemporalLegendBar');
+    const factTemporalLegendTend = document.querySelector('#factTemporalLegendTend');
+    const cicloSection = document.querySelector('#cicloSection');
+    const cicloEtapasRows = document.querySelector('#cicloEtapasRows');
+    const cicloEtapasChart = document.querySelector('#cicloEtapasChart');
+    const cicloEtapasTooltip = document.querySelector('#cicloEtapasTooltip');
+    const cicloTemporalRows = document.querySelector('#cicloTemporalRows');
+    const cicloTemporalChart = document.querySelector('#cicloTemporalChart');
+    const cicloTemporalTooltip = document.querySelector('#cicloTemporalTooltip');
+    const facturacionAlerts = document.querySelector('#facturacionAlerts');
     const kpiGrid = document.querySelector('#kpiGrid');
     const estadoSection = document.querySelector('#estadoSection');
     const estadoRows = document.querySelector('#estadoRows');
@@ -669,7 +942,12 @@ def render_index() -> str:
     const statusColors = ['#276f86', '#d0b56b', '#d96058', '#57c5b6', '#8a6f35', '#5b6673'];
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let ventasLoaded = false;
+    let facturacionLoaded = false;
     let estadoChart = { slices: [], activeIndex: null };
+    let facturacionEstadoChart = { slices: [], activeIndex: null };
+    let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
+    let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
     let semanaChartState = { rows: [], activeIndex: null, points: [], trends: null, vista: 'monto' };
     let kpiCanvasStates = [];
@@ -812,10 +1090,7 @@ def render_index() -> str:
       }
       const slice = estadoChart.slices[estadoChart.activeIndex];
       estadoPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
-      if (event) {
-        estadoTooltip.style.left = `${event.clientX}px`;
-        estadoTooltip.style.top = `${event.clientY}px`;
-      }
+      if (event) { placeTooltipNear(estadoTooltip, event.clientX, event.clientY); }
       estadoTooltip.innerHTML = `
         <b>${escapeHtml(slice.estado)}</b>
         <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
@@ -898,8 +1173,552 @@ def render_index() -> str:
       setActiveEstado(Number(row.dataset.index), event);
     });
     estadoRows.addEventListener('mouseleave', () => setActiveEstado(null));
+
+    function renderFacturacionEstadoChart(activeIndex = null) {
+      const ctx = facturacionEstadoPie.getContext('2d');
+      const rect = facturacionEstadoPie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      facturacionEstadoPie.width = Math.max(1, Math.round(rect.width * dpr));
+      facturacionEstadoPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      facturacionEstadoChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function facturacionSliceAtEvent(event) {
+      const rect = facturacionEstadoPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return facturacionEstadoChart.slices.findIndex((slice) => angle >= slice.start && angle <= slice.end);
+    }
+
+    function setActiveFacturacionEstado(index, event) {
+      facturacionEstadoChart.activeIndex = index >= 0 ? index : null;
+      renderFacturacionEstadoChart(facturacionEstadoChart.activeIndex);
+      facturacionEstadoLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === facturacionEstadoChart.activeIndex));
+      facturacionEstadoRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === facturacionEstadoChart.activeIndex));
+      if (facturacionEstadoChart.activeIndex === null) {
+        facturacionEstadoTooltip.hidden = true;
+        facturacionEstadoPieCenter.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = facturacionEstadoChart.slices[facturacionEstadoChart.activeIndex];
+      facturacionEstadoPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
+      if (event) { placeTooltipNear(facturacionEstadoTooltip, event.clientX, event.clientY); }
+      facturacionEstadoTooltip.innerHTML = `
+        <b>${escapeHtml(slice.estado)}</b>
+        <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+        <div><span>Qty</span><strong>${formatNumber(slice.qty)}</strong></div>
+        <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+        <div><span>% qty</span><strong>${formatPercent(slice.qtyPct)}</strong></div>
+      `;
+      facturacionEstadoTooltip.hidden = false;
+    }
+
+    function renderFacturacionEstados(estados) {
+      const rows = [...(estados || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalQty = rows.reduce((sum, row) => sum + Number(row.n || 0), 0);
+      const totalMonto = rows.reduce((sum, row) => sum + Number(row.m || 0), 0);
+      facturacionEstadoRows.innerHTML = rows.map((row, index) => {
+        const color = statusColors[index % statusColors.length];
+        const qtyPct = totalQty ? Number(row.n || 0) / totalQty : 0;
+        const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color: ${color}"><span class="status-dot"></span>${escapeHtml(row.estado)}</span></td>
+          <td>${formatNumber(row.n)}</td>
+          <td>${formatMoney(row.m)}</td>
+          <td>${formatPercent(qtyPct)}</td>
+          <td>${formatPercent(montoPct)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="5">Sin facturas vigentes en el periodo.</td></tr>';
+      let current = -Math.PI / 2;
+      facturacionEstadoChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const slice = {
+          estado: row.estado,
+          qty: Number(row.n || 0),
+          monto: value,
+          qtyPct: totalQty ? Number(row.n || 0) / totalQty : 0,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color: statusColors[index % statusColors.length],
+          start: current,
+          end: current + span,
+        };
+        current += span;
+        return slice;
+      });
+      facturacionEstadoLegend.innerHTML = facturacionEstadoChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.estado)}</span>
+          <strong>${formatPercent(slice.montoPct)}</strong>
+        </button>
+      `).join('');
+      setActiveFacturacionEstado(null);
+    }
+
+    facturacionEstadoPie.addEventListener('mousemove', (event) => {
+      const index = facturacionSliceAtEvent(event);
+      if (index >= 0) setActiveFacturacionEstado(index, event);
+      else setActiveFacturacionEstado(null);
+    });
+    facturacionEstadoPie.addEventListener('mouseleave', () => setActiveFacturacionEstado(null));
+    facturacionEstadoLegend.addEventListener('mousemove', (event) => {
+      const item = event.target.closest('.legend-item');
+      if (!item) return;
+      setActiveFacturacionEstado(Number(item.dataset.index), event);
+    });
+    facturacionEstadoLegend.addEventListener('mouseleave', () => setActiveFacturacionEstado(null));
+    facturacionEstadoRows.addEventListener('mousemove', (event) => {
+      const row = event.target.closest('tr');
+      if (!row) return;
+      setActiveFacturacionEstado(Number(row.dataset.index), event);
+    });
+    facturacionEstadoRows.addEventListener('mouseleave', () => setActiveFacturacionEstado(null));
+
+    function drawFacturacionTemporalChart(activeIndex = null) {
+      const ctx = facturacionTemporalChart.getContext('2d');
+      const rect = resizeCanvasToDisplay(facturacionTemporalChart, ctx);
+      const width = rect.width;
+      const height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      const rows = facturacionTemporalState.rows;
+      if (!rows.length) return;
+
+      const esCantidad = facturacionTemporalState.vista === 'cantidad';
+      const val = (row) => esCantidad ? row.cantidad : row.monto;
+      const barColor = esCantidad ? '#57c5b6' : '#159895';
+      const fmtY = esCantidad
+        ? (v) => formatNumber(Math.round(v))
+        : (v) => formatMoney(v).replace('MXN', '').trim();
+
+      const pad = { left: 64, right: 24, top: 26, bottom: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const maxVal = Math.max(...rows.map(val), 1);
+      const maxY = maxVal * 1.12;
+      const slot = plotW / rows.length;
+      const barW = Math.min(48, slot * 0.55);
+      facturacionTemporalState.points = [];
+
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(width - pad.right, y);
+        ctx.stroke();
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#65717e';
+        ctx.fillText(fmtY(maxY * (1 - i / 4)), pad.left - 8, y);
+      }
+
+      rows.forEach((row, index) => {
+        const centerX = pad.left + slot * index + slot / 2;
+        const h = (val(row) / maxY) * plotH;
+        const x = centerX - barW / 2;
+        const y = pad.top + plotH - h;
+        const isActive = activeIndex === index;
+
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.35;
+        drawRoundRect(ctx, x, y, barW, h, 5);
+        ctx.fillStyle = barColor;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+        ctx.font = `${isActive ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, centerX, pad.top + plotH + 14);
+        facturacionTemporalState.points.push({ x: centerX, y, row });
+      });
+
+      const tendencias = facturacionTemporalState.tendencias;
+      if (tendencias) {
+        const trendKey = esCantidad ? 'cantidad' : 'monto';
+        const trend = tendencias[trendKey];
+        if (trend && rows.length > 1) {
+          const n = rows.length;
+          const x0 = pad.left + slot / 2;
+          const xN = pad.left + slot * (n - 1) + slot / 2;
+          const yFromVal = (v) => pad.top + plotH - (v / maxY) * plotH;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x0, yFromVal(trend.start));
+          ctx.lineTo(xN, yFromVal(trend.end));
+          ctx.strokeStyle = barColor;
+          ctx.lineWidth = 2.5;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      rows.forEach((row, index) => {
+        const point = facturacionTemporalState.points[index];
+        const isActive = activeIndex === index;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, isActive ? 5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbfcfd';
+        ctx.fill();
+        ctx.lineWidth = isActive ? 4 : 2.5;
+        ctx.strokeStyle = barColor;
+        ctx.stroke();
+      });
+
+      if (activeIndex !== null) {
+        const point = facturacionTemporalState.points[activeIndex];
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 13, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(21,152,149,.22)';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#65717e';
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(esCantidad ? 'Barras: cantidad · Línea: tendencia' : 'Barras: monto facturado · Línea: tendencia', pad.left, 8);
+    }
+
+    function setActiveFacturacionTemporal(index, event) {
+      facturacionTemporalState.activeIndex = index >= 0 ? index : null;
+      drawFacturacionTemporalChart(facturacionTemporalState.activeIndex);
+      facturacionTemporalRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === facturacionTemporalState.activeIndex));
+      if (facturacionTemporalState.activeIndex === null) {
+        facturacionTemporalTooltip.hidden = true;
+        return;
+      }
+      const row = facturacionTemporalState.rows[facturacionTemporalState.activeIndex];
+      if (event) { placeTooltipNear(facturacionTemporalTooltip, event.clientX, event.clientY); }
+      facturacionTemporalTooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Qty</span><strong>${formatNumber(row.cantidad)}</strong></div>
+        <div><span>Monto</span><strong>${formatMoney(row.monto)}</strong></div>
+      `;
+      facturacionTemporalTooltip.hidden = false;
+    }
+
+    function renderFacturacionTemporal(temporal) {
+      const periodos = temporal?.periodos || [];
+      const rows = periodos.map((row) => ({
+        etiqueta: row.etiqueta || '',
+        cantidad: Number(row.cantidad || 0),
+        monto: Number(row.monto || 0),
+      }));
+      if (!rows.length) return;
+      facturacionTemporalState.rows = rows;
+      facturacionTemporalState.tendencias = temporal?.tendencias || null;
+      facturacionTemporalRows.innerHTML = rows.map((row, index) => `
+        <tr data-index="${index}">
+          <td><strong>${escapeHtml(row.etiqueta)}</strong></td>
+          <td>${formatNumber(row.cantidad)}</td>
+          <td>${formatMoney(row.monto)}</td>
+        </tr>
+      `).join('');
+      const totalQty = rows.reduce((s, r) => s + r.cantidad, 0);
+      const totalMonto = rows.reduce((s, r) => s + r.monto, 0);
+      facturacionTemporalTotals.innerHTML = `<tr><td><strong>Total</strong></td><td>${formatNumber(totalQty)}</td><td>${formatMoney(totalMonto)}</td></tr>`;
+      setActiveFacturacionTemporal(null);
+    }
+
+    function setFacturacionTemporalVista(vista) {
+      facturacionTemporalState.vista = vista;
+      factTemporalVistaMonto.classList.toggle('active', vista === 'monto');
+      factTemporalVistaCantidad.classList.toggle('active', vista === 'cantidad');
+      factTemporalLegendBar.textContent = vista === 'cantidad' ? 'Qty facturas' : 'Monto facturado';
+      factTemporalLegendTend.textContent = vista === 'cantidad' ? 'Tendencia qty' : 'Tendencia monto';
+      drawFacturacionTemporalChart(facturacionTemporalState.activeIndex);
+    }
+    factTemporalVistaMonto.addEventListener('click', () => setFacturacionTemporalVista('monto'));
+    factTemporalVistaCantidad.addEventListener('click', () => setFacturacionTemporalVista('cantidad'));
+
+    facturacionTemporalChart.addEventListener('mousemove', (event) => {
+      const rect = facturacionTemporalChart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const nearest = facturacionTemporalState.points.reduce((best, point, index) => {
+        const distance = Math.abs(point.x - x);
+        return distance < best.distance ? { index, distance } : best;
+      }, { index: -1, distance: Infinity });
+      if (nearest.distance <= Math.max(42, rect.width / Math.max(facturacionTemporalState.rows.length * 2, 1))) setActiveFacturacionTemporal(nearest.index, event);
+      else setActiveFacturacionTemporal(null);
+    });
+    facturacionTemporalChart.addEventListener('mouseleave', () => setActiveFacturacionTemporal(null));
+    facturacionTemporalRows.addEventListener('mousemove', (event) => {
+      const row = event.target.closest('tr');
+      if (!row) return;
+      setActiveFacturacionTemporal(Number(row.dataset.index), event);
+    });
+    facturacionTemporalRows.addEventListener('mouseleave', () => setActiveFacturacionTemporal(null));
+
+    const CICLO_COLORS = ['#276f86', '#57c5b6', '#d0b56b', '#d96058'];
+    const CICLO_LABELS = ['Ped.→Fact.', 'Fact.→Val.', 'Val.→Asoc.', 'Ciclo total'];
+
+    function drawCicloEtapasChart(activeIndex = null) {
+      const ctx = cicloEtapasChart.getContext('2d');
+      const rect = resizeCanvasToDisplay(cicloEtapasChart, ctx);
+      const width = rect.width;
+      const height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      const rows = cicloEtapasState.rows;
+      if (!rows.length) return;
+
+      const pad = { left: 38, right: 16, top: 20, bottom: 44 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const maxVal = Math.max(...rows.map((r) => r.avg || 0), 1);
+      const maxY = maxVal * 1.2;
+      const slot = plotW / rows.length;
+      const barW = Math.min(56, slot * 0.55);
+      cicloEtapasState.points = [];
+
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        ctx.fillText(`${Math.round(maxY * (1 - i / 4))}d`, pad.left - 5, y);
+      }
+
+      rows.forEach((row, index) => {
+        const avg = row.avg || 0;
+        const centerX = pad.left + slot * index + slot / 2;
+        const h = (avg / maxY) * plotH;
+        const x = centerX - barW / 2;
+        const y = pad.top + plotH - h;
+        const isActive = activeIndex === index;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.35;
+        drawRoundRect(ctx, x, y, barW, h, 5);
+        ctx.fillStyle = CICLO_COLORS[index % CICLO_COLORS.length];
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        if (row.med !== null && row.med !== undefined) {
+          const medY = pad.top + plotH - (row.med / maxY) * plotH;
+          ctx.strokeStyle = '#fbfcfd'; ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.moveTo(x - 4, medY); ctx.lineTo(x + barW + 4, medY); ctx.stroke();
+        }
+
+        ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+        ctx.font = `${isActive ? 800 : 700} 11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(CICLO_LABELS[index] || row.etapa, centerX, pad.top + plotH + 10);
+        cicloEtapasState.points.push({ x: centerX, y, row });
+      });
+    }
+
+    function setActiveCicloEtapa(index, event) {
+      cicloEtapasState.activeIndex = index >= 0 ? index : null;
+      drawCicloEtapasChart(cicloEtapasState.activeIndex);
+      cicloEtapasRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === cicloEtapasState.activeIndex));
+      if (cicloEtapasState.activeIndex === null) { cicloEtapasTooltip.hidden = true; return; }
+      const row = cicloEtapasState.rows[cicloEtapasState.activeIndex];
+      if (event) { placeTooltipNear(cicloEtapasTooltip, event.clientX, event.clientY); }
+      cicloEtapasTooltip.innerHTML = `
+        <b>${escapeHtml(row.etapa)}</b>
+        <div><span>Promedio</span><strong>${row.avg !== null ? row.avg + ' días' : '—'}</strong></div>
+        <div><span>Mediana</span><strong>${row.med !== null ? row.med + ' días' : '—'}</strong></div>
+        <div><span>Máximo</span><strong>${row.max !== null ? row.max + ' días' : '—'}</strong></div>
+        <div><span>N</span><strong>${row.n}</strong></div>
+      `;
+      cicloEtapasTooltip.hidden = false;
+    }
+
+    function drawCicloTemporalChart(activeIndex = null) {
+      const ctx = cicloTemporalChart.getContext('2d');
+      const rect = resizeCanvasToDisplay(cicloTemporalChart, ctx);
+      const width = rect.width; const height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      const rows = cicloTemporalState.rows.filter((r) => r.avg_tot !== null);
+      if (!rows.length) return;
+
+      const pad = { left: 42, right: 16, top: 20, bottom: 40 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const maxVal = Math.max(...rows.map((r) => r.avg_tot), 1);
+      const maxY = maxVal * 1.2;
+      const allRows = cicloTemporalState.rows;
+      const slot = plotW / allRows.length;
+      cicloTemporalState.points = [];
+
+      ctx.fillStyle = '#fbfcfd'; ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        ctx.fillText(`${Math.round(maxY * (1 - i / 4))}d`, pad.left - 5, y);
+      }
+
+      allRows.forEach((row, index) => {
+        const centerX = pad.left + slot * index + slot / 2;
+        const val = row.avg_tot;
+        const y = val !== null ? pad.top + plotH - (val / maxY) * plotH : null;
+        const isActive = activeIndex === index;
+
+        ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+        ctx.font = `${isActive ? 800 : 700} 11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, centerX, pad.top + plotH + 10);
+
+        if (y !== null) {
+          const barW = Math.min(40, slot * 0.5);
+          const barH = (val / maxY) * plotH;
+          ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.4;
+          drawRoundRect(ctx, centerX - barW / 2, y, barW, barH, 4);
+          ctx.fillStyle = '#d96058'; ctx.fill();
+          ctx.globalAlpha = 1;
+          cicloTemporalState.points.push({ x: centerX, y, row, index });
+        }
+      });
+
+      const validPoints = cicloTemporalState.points;
+      if (validPoints.length > 1) {
+        ctx.beginPath();
+        validPoints.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        ctx.strokeStyle = '#d96058'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+        ctx.lineJoin = 'round'; ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      validPoints.forEach((p) => {
+        const isActive = activeIndex === p.index;
+        ctx.beginPath(); ctx.arc(p.x, p.y, isActive ? 5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbfcfd'; ctx.fill();
+        ctx.lineWidth = isActive ? 4 : 2.5; ctx.strokeStyle = '#d96058'; ctx.stroke();
+      });
+    }
+
+    function setActiveCicloTemporal(index, event) {
+      cicloTemporalState.activeIndex = index >= 0 ? index : null;
+      drawCicloTemporalChart(cicloTemporalState.activeIndex);
+      cicloTemporalRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === cicloTemporalState.activeIndex));
+      if (cicloTemporalState.activeIndex === null) { cicloTemporalTooltip.hidden = true; return; }
+      const row = cicloTemporalState.rows[cicloTemporalState.activeIndex];
+      if (event) { placeTooltipNear(cicloTemporalTooltip, event.clientX, event.clientY); }
+      cicloTemporalTooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Ciclo total prom.</span><strong>${row.avg_tot !== null ? row.avg_tot + ' días' : '—'}</strong></div>
+      `;
+      cicloTemporalTooltip.hidden = false;
+    }
+
+    function renderCicloFacturacion(ciclo) {
+      if (!ciclo) return;
+      const etapas = ciclo.etapas || [];
+      cicloEtapasState.rows = etapas;
+      cicloEtapasRows.innerHTML = etapas.map((e, index) => `
+        <tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${CICLO_COLORS[index % CICLO_COLORS.length]}"><span class="status-dot"></span>${escapeHtml(e.etapa)}</span></td>
+          <td>${e.avg !== null ? e.avg + ' días' : '—'}</td>
+          <td>${e.med !== null ? e.med + ' días' : '—'}</td>
+          <td>${e.max !== null ? e.max + ' días' : '—'}</td>
+          <td>${e.n}</td>
+        </tr>
+      `).join('');
+      setActiveCicloEtapa(null);
+
+      const temporal = ciclo.temporal || [];
+      cicloTemporalState.rows = temporal;
+      cicloTemporalRows.innerHTML = temporal.map((p, index) => `
+        <tr data-index="${index}">
+          <td><strong>${escapeHtml(p.etiqueta)}</strong></td>
+          <td>${p.avg_tot !== null ? p.avg_tot + ' días' : '—'}</td>
+        </tr>
+      `).join('');
+      setActiveCicloTemporal(null);
+    }
+
+    cicloEtapasChart.addEventListener('mousemove', (event) => {
+      const rect = cicloEtapasChart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const nearest = cicloEtapasState.points.reduce((best, point, index) => {
+        const distance = Math.abs(point.x - x);
+        return distance < best.distance ? { index, distance } : best;
+      }, { index: -1, distance: Infinity });
+      if (nearest.distance <= 60) setActiveCicloEtapa(nearest.index, event);
+      else setActiveCicloEtapa(null);
+    });
+    cicloEtapasChart.addEventListener('mouseleave', () => setActiveCicloEtapa(null));
+    cicloEtapasRows.addEventListener('mousemove', (event) => {
+      const row = event.target.closest('tr');
+      if (!row) return;
+      setActiveCicloEtapa(Number(row.dataset.index), event);
+    });
+    cicloEtapasRows.addEventListener('mouseleave', () => setActiveCicloEtapa(null));
+
+    cicloTemporalChart.addEventListener('mousemove', (event) => {
+      const rect = cicloTemporalChart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const nearest = cicloTemporalState.points.reduce((best, point) => {
+        const distance = Math.abs(point.x - x);
+        return distance < best.distance ? { index: point.index, distance } : best;
+      }, { index: -1, distance: Infinity });
+      if (nearest.distance <= Math.max(42, rect.width / Math.max(cicloTemporalState.rows.length * 2, 1))) setActiveCicloTemporal(nearest.index, event);
+      else setActiveCicloTemporal(null);
+    });
+    cicloTemporalChart.addEventListener('mouseleave', () => setActiveCicloTemporal(null));
+    cicloTemporalRows.addEventListener('mousemove', (event) => {
+      const row = event.target.closest('tr');
+      if (!row) return;
+      setActiveCicloTemporal(Number(row.dataset.index), event);
+    });
+    cicloTemporalRows.addEventListener('mouseleave', () => setActiveCicloTemporal(null));
+
     window.addEventListener('resize', () => {
       renderEstadoChart(estadoChart.activeIndex);
+      renderFacturacionEstadoChart(facturacionEstadoChart.activeIndex);
+      drawFacturacionTemporalChart(facturacionTemporalState.activeIndex);
+      drawCicloEtapasChart(cicloEtapasState.activeIndex);
+      drawCicloTemporalChart(cicloTemporalState.activeIndex);
       drawSemanaChart(semanaChartState.activeIndex);
       if (!tiemposAprSection.hidden) renderTiemposApr(window._lastTiemposApr);
     });
@@ -1078,10 +1897,7 @@ def render_index() -> str:
         return;
       }
       const row = semanaChartState.rows[semanaChartState.activeIndex];
-      if (event) {
-        semanaTooltip.style.left = `${event.clientX}px`;
-        semanaTooltip.style.top = `${event.clientY}px`;
-      }
+      if (event) { placeTooltipNear(semanaTooltip, event.clientX, event.clientY); }
       semanaTooltip.innerHTML = `
         <b>${escapeHtml(row.semana)}</b>
         <div><span>Cotizado</span><strong>${formatMoney(row.cotizado)}</strong></div>
@@ -1656,10 +2472,15 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      kpiCanvasStates = [...kpiGrid.querySelectorAll('.kpi-card')].map((card, index) => {
-        const canvas = document.createElement('canvas');
-        canvas.className = 'kpi-bg';
-        card.prepend(canvas);
+      const grids = [kpiGrid, facturacionKpiGrid].filter(Boolean);
+      const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
+      kpiCanvasStates = cards.map((card, index) => {
+        let canvas = card.querySelector(':scope > canvas.kpi-bg');
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.className = 'kpi-bg';
+          card.prepend(canvas);
+        }
         const state = { card, canvas, ctx: canvas.getContext('2d'), index, hover: false, x: 0, y: 0 };
         card.addEventListener('mousemove', (event) => {
           const rect = card.getBoundingClientRect();
@@ -1737,6 +2558,92 @@ def render_index() -> str:
       attachKpiCanvases();
     }
 
+    function renderFacturacion(body) {
+      const kpis = body.kpis || {};
+      const vigentes = Number(kpis.facturas_vigentes || 0);
+      const canceladas = Number(kpis.facturas_canceladas || 0);
+      const principales = Number(kpis.facturas_principales || 0);
+      const secundarias = Number(kpis.facturas_secundarias || 0);
+      const rezagoMonto = Number(kpis.rezago_estimado_monto || 0);
+      const montoFacturado = Number(kpis.monto_facturado_vigente || 0);
+      const valPct = Number(kpis.cobertura_validacion_pct || 0);
+      const asPct = Number(kpis.cobertura_asociacion_pct || 0);
+
+      const pctSecundarias = (principales + secundarias) > 0 ? secundarias / (principales + secundarias) : 0;
+      const pctCanceladas = (vigentes + canceladas) > 0 ? canceladas / (vigentes + canceladas) : 0;
+      const pctRezago = montoFacturado > 0 ? rezagoMonto / montoFacturado : 0;
+      const difCobertura = ((valPct - asPct) * 100).toFixed(1) + ' pp';
+
+      const coberturaWarning = (valPct < 0.8 || asPct < 0.8) ? 'warning' : '';
+      const cancelacionesWarning = Number(kpis.monto_cancelado || 0) > 0 ? 'warning' : '';
+      const rezagoWarning = rezagoMonto > 0 ? 'warning' : '';
+
+      const cards = [
+        `<article class="kpi-card primary">
+          <h2>Facturas vigentes</h2>
+          <div class="kpi-pair">
+            ${metric('Facturas', kpiValue(kpis, 'facturas_vigentes', 'number'), 'Principales y secundarias sin duplicar')}
+            ${metric('Monto facturado', kpiValue(kpis, 'monto_facturado_vigente', 'money'), 'Monto vigente del periodo')}
+          </div>
+          ${metric('Ticket promedio', kpiValue(kpis, 'ticket_promedio_facturado', 'money'), 'Monto / facturas vigentes')}
+        </article>`,
+        `<article class="kpi-card accent">
+          <h2>Origen de factura</h2>
+          <div class="kpi-pair">
+            ${metric('Principales', kpiValue(kpis, 'facturas_principales', 'number'), 'Primer registro de factura')}
+            ${metric('Secundarias', kpiValue(kpis, 'facturas_secundarias', 'number'), 'Facturas adicionales')}
+          </div>
+          ${metric('% secundarias', formatPercent(pctSecundarias), 'Participación de facturas adicionales')}
+        </article>`,
+        `<article class="kpi-card ${coberturaWarning}">
+          <h2>Cobertura documental</h2>
+          <div class="kpi-pair">
+            ${metric('Validación', kpiValue(kpis, 'cobertura_validacion_pct', 'percent'), 'Facturas con fecha de validación')}
+            ${metric('Asociación', kpiValue(kpis, 'cobertura_asociacion_pct', 'percent'), 'Facturas asociadas a OC')}
+          </div>
+          ${delta('Diferencia', difCobertura, 'Validación menos asociación')}
+        </article>`,
+        `<article class="kpi-card ${cancelacionesWarning}">
+          <h2>Cancelaciones</h2>
+          <div class="kpi-pair">
+            ${metric('Canceladas', kpiValue(kpis, 'facturas_canceladas', 'number'), 'Excluidas del monto vigente')}
+            ${metric('Monto cancelado', kpiValue(kpis, 'monto_cancelado', 'money'), 'Monto fuera de vigencia')}
+          </div>
+          ${metric('% sobre emitidas', formatPercent(pctCanceladas), 'Canceladas / (vigentes + canceladas)')}
+        </article>`,
+        `<article class="kpi-card ${rezagoWarning}">
+          <h2>Rezago estimado</h2>
+          <div class="kpi-pair">
+            ${metric('Cotizaciones', kpiValue(kpis, 'rezago_estimado_cantidad', 'number'), 'Aprobadas sin factura vigente')}
+            ${metric('Monto', kpiValue(kpis, 'rezago_estimado_monto', 'money'), 'Pendiente estimado')}
+          </div>
+          ${metric('% del facturado', formatPercent(pctRezago), 'Rezago / monto facturado')}
+        </article>`,
+      ];
+      facturacionKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
+
+      renderFacturacionEstados(body.series?.estados || []);
+
+      renderFacturacionTemporal(body.series?.temporal);
+      renderCicloFacturacion(body.ciclo);
+      const signals = body.signals || [];
+      facturacionAlerts.innerHTML = signals.map((signal) => `<span class="facturacion-alert">${escapeHtml(signal.titulo)}: ${formatNumber(signal.metricas?.cantidad || 0)}</span>`).join('') || '<span class="panel-state">Sin alertas operativas.</span>';
+    }
+
+    async function loadFacturacion() {
+      if (facturacionLoaded) return;
+      try {
+        const response = await fetch('/api/dashboard/facturacion');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los KPIs de facturación.');
+        renderFacturacion(body);
+        facturacionLoaded = true;
+      } catch (error) {
+        facturacionKpiGrid.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     async function loadVentasKpis() {
       if (ventasLoaded) return;
       try {
@@ -1762,7 +2669,9 @@ def render_index() -> str:
     function setActiveModule(moduleName) {
       canvas.dataset.module = moduleName;
       ventasPanel.hidden = moduleName !== 'ventas';
+      facturacionPanel.hidden = moduleName !== 'facturacion';
       if (moduleName === 'ventas') loadVentasKpis();
+      if (moduleName === 'facturacion') loadFacturacion();
     }
 
     form.addEventListener('input', refreshPayload);
@@ -1817,6 +2726,33 @@ def render_index() -> str:
       }
     });
 
+    regenerarButton.addEventListener('click', async () => {
+      if (!form.fecha_desde.value || !form.fecha_hasta.value) {
+        setStatus('Error', 'error', 'Falta fecha inicio o fecha fin.');
+        return;
+      }
+      regenerarButton.disabled = true;
+      submitButton.disabled = true;
+      setStatus('Regenerando', '', 'Regenerando snapshots con archivos actuales...');
+      try {
+        const response = await fetch('/api/regenerar-snapshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fecha_desde: form.fecha_desde.value, fecha_hasta: form.fecha_hasta.value })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudo regenerar.');
+        const archivados = body.archived?.length || 0;
+        setStatus('Regenerado', 'success', `Snapshots actualizados. ${archivados} archivo${archivados !== 1 ? 's' : ''} archivado${archivados !== 1 ? 's' : ''}.`);
+        window.location.reload();
+      } catch (error) {
+        setStatus('Error', 'error', error.message);
+      } finally {
+        regenerarButton.disabled = false;
+        submitButton.disabled = false;
+      }
+    });
+
     refreshPayload();
     loadVentasKpis();
   </script>
@@ -1856,33 +2792,112 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=422, detail=f"Falta columna requerida en Cotizaciones: {exc}") from exc
 
+    @app.get("/api/dashboard/facturacion")
+    def dashboard_facturacion(request: Request) -> dict:
+        try:
+            return load_facturacion_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/actualizar-datos", status_code=status.HTTP_202_ACCEPTED)
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
         try:
             validate_request(payload.ambiente, payload.fecha_desde, payload.fecha_hasta)
             before = snapshot_cotizaciones(request.app.state.data_dir)
+            before_facturas = snapshot_facturas(request.app.state.data_dir)
             webhook = call_webhook(
                 payload.ambiente,
                 payload.fecha_desde,
                 payload.fecha_hasta,
                 http_post=request.app.state.http_post,
             )
-            validate_webhook_success(webhook)
+            try:
+                validate_webhook_success(webhook)
+            except WebhookResponseError:
+                # 502/524: proxy o Cloudflare cortó la conexión antes de que n8n respondiera,
+                # pero n8n sigue corriendo y depositará los archivos. Continuamos esperándolos.
+                if webhook["status_code"] not in (502, 524):
+                    raise
+            csv_path = wait_for_changed_cotizaciones(request.app.state.data_dir, before)
+            wait_for_changed_facturas(request.app.state.data_dir, before_facturas)
+            try:
+                publish_facturacion_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                    cot_path=csv_path,
+                )
+            except FileNotFoundError:
+                pass
             snapshot = publish_ventas_snapshot(
                 request.app.state.data_dir,
                 request.app.state.dashboard_dir,
-                request.app.state.processed_dir,
                 before,
                 payload.fecha_desde,
                 payload.fecha_hasta,
+                csv_path=csv_path,
             )
-            return {**webhook, "status": "completada", "files": [snapshot["file"]]}
+            archived = archive_data_dir(
+                request.app.state.data_dir,
+                request.app.state.processed_dir,
+            )
+            return {**webhook, "status": "completada", "files": [snapshot["file"]], "archived": archived}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except WebhookResponseError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except requests.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"Error llamando webhook n8n: {exc}") from exc
+
+    class RegenerarRequest(BaseModel):
+        fecha_desde: str
+        fecha_hasta: str
+
+    @app.post("/api/regenerar-snapshot", status_code=status.HTTP_200_OK)
+    def regenerar_snapshot(payload: RegenerarRequest, request: Request) -> dict:
+        """Regenera los snapshots de ventas y facturación con los archivos actuales en data/.
+        Útil cuando el webhook falla (502) pero los CSV ya se descargaron.
+        No mueve archivos ni llama a n8n."""
+        try:
+            fecha_desde = parse_iso_date(payload.fecha_desde, "fecha_desde").strftime("%Y-%m-%d")
+            fecha_hasta = parse_iso_date(payload.fecha_hasta, "fecha_hasta").strftime("%Y-%m-%d")
+            if fecha_hasta < fecha_desde:
+                raise ValueError("fecha_hasta no puede ser menor que fecha_desde")
+            try:
+                publish_facturacion_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            files_regenerated = []
+            cot_candidates = sorted(
+                Path(request.app.state.data_dir).glob("Cotizaciones*.csv"),
+                key=lambda p: (p.stat().st_mtime_ns, p.name),
+            )
+            if cot_candidates:
+                cot_path = cot_candidates[-1]
+                snapshot = publish_ventas_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    {},
+                    fecha_desde,
+                    fecha_hasta,
+                    csv_path=cot_path,
+                )
+                files_regenerated = [snapshot["file"]]
+            archived = archive_data_dir(
+                request.app.state.data_dir,
+                request.app.state.processed_dir,
+            )
+            return {"status": "regenerado", "files": files_regenerated, "archived": archived}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return app
 

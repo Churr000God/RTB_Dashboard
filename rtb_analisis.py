@@ -74,6 +74,7 @@ def find_latest_csv(data_dir, prefix):
         os.path.join(data_dir, name)
         for name in os.listdir(data_dir)
         if name.startswith(prefix) and name.lower().endswith(".csv")
+        and not (prefix == "Facturas_" and name.startswith("Facturas_Secundarias_"))
     ]
     if not matches:
         existing = sorted(name for name in os.listdir(data_dir) if name.lower().endswith(".csv"))
@@ -365,9 +366,17 @@ def temporal_key(dt, granularidad):
 
 def aggregate_temporal(rows, date_getter, metric_getters, fecha_desde=None, fecha_hasta=None, axis=None):
     axis = axis or temporal_axis(fecha_desde, fecha_hasta, dates=[date_getter(row) for row in rows])
+    start_d = parse_date(fecha_desde).date() if parse_date(fecha_desde) else None
+    end_d = parse_date(fecha_hasta).date() if parse_date(fecha_hasta) else None
     buckets = {key: {metric: 0.0 for metric in metric_getters} for key in axis["keys"]}
     for row in rows:
-        key = temporal_key(parse_date(date_getter(row)), axis["granularidad"])
+        dt = parse_date(date_getter(row))
+        if dt is None:
+            continue
+        d = dt.date()
+        if (start_d and d < start_d) or (end_d and d > end_d):
+            continue
+        key = temporal_key(dt, axis["granularidad"])
         if key not in buckets:
             continue
         for metric, getter in metric_getters.items():
@@ -417,6 +426,319 @@ def build_temporal_series(cot, fecha_desde=None, fecha_hasta=None):
             "cotizaciones": linear_trend([data["cotizaciones"] for data in periods]),
             "aprobadas": linear_trend([data["aprobadas"] for data in periods]),
         },
+    }
+
+def factura_record(row, tipo):
+    return {
+        "factura_id": row.get("Factura_id", ""),
+        "factura": row.get("#_Factura", ""),
+        "cotizacion_id": row.get("Factura_cotizacion", ""),
+        "cliente": row.get("Factura_Cliente", ""),
+        "estado": (row.get("Estado_Factura") or "Sin estado").strip() or "Sin estado",
+        "tipo": tipo,
+    }
+
+def make_facturacion_signal(tipo, severidad, titulo, descripcion, periodo, metricas=None, registros=None, accion=""):
+    return {
+        "id": f"{tipo}:{periodo}".replace(" ", "_"),
+        "tipo": tipo,
+        "severidad": severidad,
+        "titulo": titulo,
+        "descripcion": descripcion,
+        "modulo": "facturacion",
+        "periodo": periodo,
+        "metricas": metricas or {},
+        "registros": registros or [],
+        "accion_sugerida": accion,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+def build_facturacion_dashboard(cot, principales, secundarias, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d = _e.date() if _e else None
+
+    cot_aprobacion = {
+        (r.get("Cotizacion_id") or "").strip(): parse_date(r.get("Fecha_aprobacion"))
+        for r in cot
+        if (r.get("Cotizacion_id") or "").strip()
+    }
+
+    def normalized(row, tipo):
+        date_key = "Fecha_Facturacion" if tipo == "principal" else "Fecha_Facturacion_Secundaria"
+        validation_key = "Fecha_Validacion" if tipo == "principal" else "Fecha_Validacion_Secundaria"
+        association_key = "Fecha_Asociacion" if tipo == "principal" else "Fecha_Asociacion_Secundaria"
+        partial_key = "Monto_primer_factura" if tipo == "principal" else "Monto_segunda_factura"
+        date = parse_date(row.get(date_key))
+        raw_partial = row.get(partial_key)
+        partial = round(f(raw_partial), 2) if (raw_partial is not None and str(raw_partial).strip() != "") else None
+        total_amount = round(f(row.get("Total")), 2)
+        cid = (row.get("Factura_cotizacion") or "").strip()
+        estado_aprob = (row.get("Factura_Estado_Aprobacion") or "").strip().lower()
+        raw_folio = (row.get("#_Factura") or "").strip()
+        m_folio = re.match(r"^(C\d+)", raw_folio)
+        folio = m_folio.group(1) if m_folio else raw_folio
+        return {
+            "row": row,
+            "tipo": tipo,
+            "fecha": date,
+            "fecha_validacion": parse_date(row.get(validation_key)),
+            "fecha_asociacion": parse_date(row.get(association_key)),
+            "fecha_aprobacion": cot_aprobacion.get(cid),
+            "partial": partial,
+            "total_amount": total_amount,
+            "monto": partial if partial is not None else total_amount,
+            "cancelada": estado_aprob in ("cancelada", "cancelado"),
+            "aprobada": estado_aprob == "aprobada",
+            "folio": folio,
+            "folio_dirty": bool(m_folio) and folio != raw_folio,
+            "cotizacion_id": cid,
+            "factura_id": (row.get("Factura_id") or "").strip(),
+        }
+
+    rows = [normalized(row, "principal") for row in principales]
+    rows.extend(normalized(row, "secundaria") for row in secundarias)
+
+    def in_period(item):
+        if not item["fecha"]:
+            return False
+        d = item["fecha"].date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    canceladas = [item for item in rows if item["cancelada"] and in_period(item)]
+    incompletas = [
+        item for item in rows
+        if item["aprobada"] and not item["cancelada"] and (not item["folio"] or not item["fecha"])
+    ]
+    candidates = [
+        item for item in rows
+        if item["aprobada"] and not item["cancelada"] and item["folio"] and in_period(item)
+    ]
+    vigentes = []
+    duplicate_rows = []
+    seen = set()
+    for item in candidates:
+        identity = item["factura_id"] or item["folio"] or item["cotizacion_id"]
+        if identity in seen:
+            duplicate_rows.append(item)
+            continue
+        seen.add(identity)
+        vigentes.append(item)
+    # Suprimir falsos positivos: mismo factura_id en principal y secundaria es el mismo
+    # registro de Notion exportado en ambos CSVs (anomalía de export, no error de captura).
+    # Solo reportar duplicados cuya identidad no sea el factura_id (colisión de folio/cot).
+    duplicate_rows = [item for item in duplicate_rows if not item["factura_id"]]
+
+    cot_aprobadas = [
+        row for row in cot
+        if (row.get("Estado_cotizacion") or "").strip() == "Aprobada"
+    ]
+    cotizaciones_facturadas = {item["cotizacion_id"] for item in vigentes if item["cotizacion_id"]}
+    rezago = [
+        row for row in cot_aprobadas
+        if (row.get("Cotizacion_id") or "").strip() not in cotizaciones_facturadas
+    ]
+
+    estados = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for item in vigentes:
+        estado = (item["row"].get("Estado_Factura") or "Sin estado").strip() or "Sin estado"
+        estados[estado]["n"] += 1
+        estados[estado]["m"] += item["monto"]
+
+    temporal = aggregate_temporal(
+        vigentes,
+        date_getter=lambda item: item["fecha"],
+        metric_getters={
+            "cantidad": lambda item: 1,
+            "monto": lambda item: item["monto"],
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "cantidad": linear_trend([row["cantidad"] for row in periods]),
+        "monto": linear_trend([row["monto"] for row in periods]),
+    }
+
+    def _safe_diff(a, b, max_days):
+        d = days_diff(a, b)
+        return d if d is not None and d <= max_days else None
+
+    def _cycle_stats(vals):
+        valid = sorted(v for v in vals if v is not None)
+        n = len(valid)
+        if not n:
+            return {"avg": None, "med": None, "max": None, "n": 0}
+        avg_v = round(sum(valid) / n, 1)
+        med_v = round(valid[n // 2] if n % 2 else (valid[n // 2 - 1] + valid[n // 2]) / 2, 1)
+        return {"avg": avg_v, "med": med_v, "max": max(valid), "n": n}
+
+    for item in vigentes:
+        item["_pf"] = _safe_diff(item["fecha_aprobacion"], item["fecha"], 180)
+        item["_fv"] = _safe_diff(item["fecha"], item["fecha_validacion"], 90)
+        item["_va"] = _safe_diff(item["fecha_validacion"], item["fecha_asociacion"], 180)
+        item["_tot"] = _safe_diff(item["fecha_aprobacion"], item["fecha_asociacion"], 365)
+
+    ciclo_temp = aggregate_temporal(
+        vigentes,
+        date_getter=lambda item: item["fecha"],
+        metric_getters={
+            "sum_tot": lambda item: item["_tot"] or 0,
+            "cnt_tot": lambda item: 1 if item["_tot"] is not None else 0,
+        },
+        axis=temporal,
+    )
+    for p in ciclo_temp["periodos"]:
+        p["avg_tot"] = round(p["sum_tot"] / p["cnt_tot"], 1) if p["cnt_tot"] else None
+
+    ciclo = {
+        "etapas": [
+            {"etapa": "Pedido → Facturado", **_cycle_stats([item["_pf"] for item in vigentes])},
+            {"etapa": "Facturado → Validado", **_cycle_stats([item["_fv"] for item in vigentes])},
+            {"etapa": "Validado → Asociado", **_cycle_stats([item["_va"] for item in vigentes])},
+            {"etapa": "Ciclo total", **_cycle_stats([item["_tot"] for item in vigentes])},
+        ],
+        "temporal": [
+            {"etiqueta": p["etiqueta"], "avg_tot": p["avg_tot"]}
+            for p in ciclo_temp["periodos"]
+        ],
+    }
+    for item in vigentes:
+        del item["_pf"], item["_fv"], item["_va"], item["_tot"]
+
+    signals = []
+    if incompletas:
+        signals.append(make_facturacion_signal(
+            "factura_captura_incompleta", "riesgo", "Facturas con captura incompleta",
+            "Hay facturas aprobadas sin folio o sin fecha de facturacion.",
+            period_label,
+            {"cantidad": len(incompletas)},
+            [factura_record(item["row"], item["tipo"]) for item in incompletas[:10]],
+            "Completar folio y fecha de facturacion en Notion.",
+        ))
+    if duplicate_rows:
+        signals.append(make_facturacion_signal(
+            "factura_duplicada", "atencion", "Facturas duplicadas",
+            "Hay registros repetidos entre facturas principales y secundarias.",
+            period_label,
+            {"cantidad": len(duplicate_rows)},
+            [factura_record(item["row"], item["tipo"]) for item in duplicate_rows[:10]],
+            "Revisar la asociacion para evitar doble conteo.",
+        ))
+    if rezago:
+        signals.append(make_facturacion_signal(
+            "rezago_facturacion_estimado", "riesgo", "Rezago estimado de facturacion",
+            "Hay cotizaciones aprobadas sin una factura vigente asociada.",
+            period_label,
+            {"cantidad": len(rezago), "monto": sum(f(row.get("Total")) for row in rezago)},
+            [signal_record(row) for row in rezago[:10]],
+            "Revisar cotizaciones aprobadas pendientes de facturar.",
+        ))
+
+    folios_sucios = [item for item in vigentes if item["folio_dirty"]]
+    if folios_sucios:
+        signals.append(make_facturacion_signal(
+            "factura_folio_captura_sucia", "atencion",
+            "Folios con notas embebidas en #_Factura",
+            "El campo #_Factura contiene texto extra; se extrajo el codigo Cxxxx para conteo.",
+            period_label,
+            {"cantidad": len(folios_sucios)},
+            [factura_record(item["row"], item["tipo"]) for item in folios_sucios[:10]],
+            "Limpiar el campo en Notion dejando solo el folio.",
+        ))
+
+    cot_con_secundaria = {
+        (s.get("Factura_cotizacion") or "").strip()
+        for s in secundarias
+        if (s.get("Factura_cotizacion") or "").strip()
+    }
+    pendientes_segunda = [
+        item for item in vigentes
+        if item["tipo"] == "principal" and item["partial"] is not None
+        and item["cotizacion_id"] and item["cotizacion_id"] not in cot_con_secundaria
+    ]
+    if pendientes_segunda:
+        monto_pendiente_total = round(sum(item["total_amount"] - item["partial"] for item in pendientes_segunda), 2)
+        signals.append(make_facturacion_signal(
+            "segunda_factura_pendiente", "atencion",
+            "Segunda factura pendiente de emision",
+            "Cotizaciones con primera factura emitida y segunda aun sin emitirse.",
+            period_label,
+            {"cantidad": len(pendientes_segunda), "monto_pendiente": monto_pendiente_total},
+            [factura_record(item["row"], item["tipo"]) for item in pendientes_segunda[:10]],
+            "Verificar emision de la segunda factura para cerrar la cotizacion.",
+        ))
+
+    def _sec_monto(s):
+        raw = s.get("Monto_segunda_factura")
+        if raw is not None and str(raw).strip():
+            return round(f(raw), 2)
+        return round(f(s.get("Total")), 2)
+
+    sec_by_cot = defaultdict(list)
+    for s in secundarias:
+        cid = (s.get("Factura_cotizacion") or "").strip()
+        if cid:
+            sec_by_cot[cid].append(s)
+    desbalanceadas = []
+    for item in vigentes:
+        if item["tipo"] != "principal" or item["partial"] is None:
+            continue
+        secs = sec_by_cot.get(item["cotizacion_id"], [])
+        if not secs:
+            continue
+        suma = round(item["partial"] + sum(_sec_monto(s) for s in secs), 2)
+        if abs(suma - item["total_amount"]) > 0.05:
+            desbalanceadas.append((item, suma))
+    if desbalanceadas:
+        signals.append(make_facturacion_signal(
+            "factura_partidas_desbalanceadas", "riesgo",
+            "Primer + segunda factura no cuadran con Total",
+            "Diferencia mayor a $0.05 entre la suma de partidas y el Total de la cotizacion.",
+            period_label,
+            {"cantidad": len(desbalanceadas)},
+            [factura_record(item["row"], item["tipo"]) for item, _ in desbalanceadas[:10]],
+            "Revisar captura de Monto_primer_factura / Monto_segunda_factura en Notion.",
+        ))
+
+    monto_vigente = round(sum(item["monto"] for item in vigentes), 2)
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "facturas_vigentes": len(vigentes),
+            "monto_facturado_vigente": monto_vigente,
+            "ticket_promedio_facturado": monto_vigente / len(vigentes) if vigentes else 0.0,
+            "facturas_principales": sum(1 for item in vigentes if item["tipo"] == "principal"),
+            "facturas_secundarias": sum(1 for item in vigentes if item["tipo"] == "secundaria"),
+            "facturas_canceladas": len(canceladas),
+            "monto_cancelado": round(sum(item["monto"] for item in canceladas), 2),
+            "rezago_estimado_cantidad": len(rezago),
+            "rezago_estimado_monto": round(sum(f(row.get("Total")) for row in rezago), 2),
+            "cobertura_validacion_pct": sum(1 for item in vigentes if item["fecha_validacion"]) / len(vigentes) if vigentes else 0.0,
+            "cobertura_asociacion_pct": sum(1 for item in vigentes if item["fecha_asociacion"]) / len(vigentes) if vigentes else 0.0,
+            "senales": len(signals),
+        },
+        "series": {
+            "temporal": temporal,
+            "estados": [{"estado": key, **value} for key, value in estados.items()],
+        },
+        "ciclo": ciclo,
+        "tables": {
+            "facturas": [
+                {
+                    **factura_record(item["row"], item["tipo"]),
+                    "factura": item["folio"],
+                    "fecha": item["fecha"].strftime("%Y-%m-%d"),
+                    "monto": item["monto"],
+                    "validada": bool(item["fecha_validacion"]),
+                    "asociada": bool(item["fecha_asociacion"]),
+                }
+                for item in vigentes
+            ],
+        },
+        "signals": signals,
     }
 
 def build_ventas_dashboard(cot, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
