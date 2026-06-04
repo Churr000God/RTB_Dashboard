@@ -178,3 +178,4 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-04 | Gráfica anticipos: barras agrupadas (rojo=pendiente, azul=vinculado) por mes de **emisión del anticipo**. El mes de la factura definitiva ya no determina la posición en la gráfica. |
 | 2026-06-04 | Columna Estado de anticipos: solo badge, sin texto "Procesada" del CSV. |
 | 2026-06-04 | `find_latest_facturacion_csv` migrada de denylist a allowlist regex `^<prefix>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`. Movida a `rtb_analisis.py` para ser testeable sin FastAPI. 4 tests de regresión agregados a `test_facturacion_dashboard.py`. |
+| 2026-06-04 | Compras: nueva tarjeta KPI "Total del periodo" — `n_fc + n_ant_pendientes` y `tot_fc + monto_pendientes`. Calculada en JS puro en `renderCompras()`, sin cambio de backend ni snapshot. |
