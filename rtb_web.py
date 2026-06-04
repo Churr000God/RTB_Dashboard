@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from rtb_analisis import build_compras_dashboard, build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, load_cotizaciones, read_csv
+from rtb_analisis import build_compras_dashboard, build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, find_latest_facturacion_csv, load_cotizaciones, read_csv
 
 
 WEBHOOK_URLS = {
@@ -302,16 +302,6 @@ def load_dashboard_payload(data_dir: str = "data", dashboard_dir: str = "dashboa
 
 
 
-def find_latest_facturacion_csv(data_dir: str | Path, prefix: str) -> Path:
-    root = Path(data_dir)
-    matches = [
-        path for path in root.glob(f"{prefix}*.csv")
-        if path.is_file() and not (prefix == "Facturas_" and (path.name.startswith("Facturas_Secundarias_") or path.name.startswith("Facturas_Compras_")))
-    ]
-    if not matches:
-        raise FileNotFoundError(f"No se encontro {prefix}*.csv en la carpeta de datos: {root.resolve()}")
-    return max(matches, key=lambda path: (path.stat().st_mtime_ns, path.name))
-
 
 def load_facturacion_exports(data_dir: str | Path) -> tuple[Path, Path, Path]:
     return (
@@ -361,19 +351,31 @@ def load_facturacion_payload(data_dir: str = "data", dashboard_dir: str = "dashb
     return build_facturacion_dashboard(read_csv(cot_path), read_csv(principales_path), read_csv(secundarias_path))
 
 
-def find_compras_csvs(data_dir: str | Path) -> tuple[Path, Path]:
+def find_compras_csvs(data_dir: str | Path) -> Path:
     root = Path(data_dir)
+    matches = [
+        p for p in root.glob("Facturas_Compras_*.csv")
+        if p.is_file() and not p.name.startswith("Facturas_Compras_Pagadas_")
+    ]
+    if not matches:
+        raise FileNotFoundError(f"No se encontro Facturas_Compras_*.csv en {root.resolve()}")
+    return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
 
-    def latest(prefix, exclude_prefix=None):
-        matches = [
-            p for p in root.glob(f"{prefix}*.csv")
-            if p.is_file() and (not exclude_prefix or not p.name.startswith(exclude_prefix))
-        ]
-        if not matches:
-            raise FileNotFoundError(f"No se encontro {prefix}*.csv en {root.resolve()}")
-        return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
 
-    return latest("Facturas_Compras_", exclude_prefix="Facturas_Compras_Pagadas_"), latest("Facturas_Compras_Pagadas_")
+def find_anticipos_csv(data_dir: str | Path) -> Path:
+    root = Path(data_dir)
+    matches = [p for p in root.glob("Facturas_Anticipo_*.csv") if p.is_file()]
+    if not matches:
+        raise FileNotFoundError(f"No se encontro Facturas_Anticipo_*.csv en {root.resolve()}")
+    return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
+
+
+def _load_anticipos_rows(data_dir: str | Path) -> tuple[list[dict], str | None]:
+    try:
+        path = find_anticipos_csv(data_dir)
+    except FileNotFoundError:
+        return [], None
+    return read_csv(path), path.name
 
 
 def publish_compras_snapshot(
@@ -382,19 +384,23 @@ def publish_compras_snapshot(
     fecha_desde: str,
     fecha_hasta: str,
 ) -> dict:
-    fc_path, fcp_path = find_compras_csvs(data_dir)
+    fc_path = find_compras_csvs(data_dir)
+    ant_rows, ant_name = _load_anticipos_rows(data_dir)
     period_label = f"{fecha_desde} a {fecha_hasta}"
     compras = build_compras_dashboard(
         read_csv(fc_path),
-        read_csv(fcp_path),
+        anticipos=ant_rows,
         period_label=period_label,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
     )
+    files = {"fc": fc_path.name}
+    if ant_name:
+        files["anticipos"] = ant_name
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
-        "files": {"fc": fc_path.name, "fcp": fcp_path.name},
+        "files": files,
         "dashboard": {"compras": compras},
     }
     atomic_write_json(Path(dashboard_dir) / COMPRAS_SNAPSHOT_FILENAME, snapshot)
@@ -405,8 +411,9 @@ def load_compras_payload(data_dir: str = "data", dashboard_dir: str = "dashboard
     snap = Path(dashboard_dir) / COMPRAS_SNAPSHOT_FILENAME
     if snap.exists():
         return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["compras"]
-    fc_path, fcp_path = find_compras_csvs(data_dir)
-    return build_compras_dashboard(read_csv(fc_path), read_csv(fcp_path))
+    fc_path = find_compras_csvs(data_dir)
+    ant_rows, _ = _load_anticipos_rows(data_dir)
+    return build_compras_dashboard(read_csv(fc_path), anticipos=ant_rows)
 
 
 def render_index() -> str:
@@ -548,9 +555,9 @@ def render_index() -> str:
     .pie-panel { position: relative; display: grid; justify-items: center; gap: 12px; min-width: 0; }
     .pie-canvas-wrap { position: relative; width: min(260px, 100%); aspect-ratio: 1; }
     .pie-chart { width: 100%; height: 100%; display: block; cursor: pointer; }
-    .pie-center { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 2px; pointer-events: none; }
+    .pie-center { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 2px; pointer-events: none; max-width: 52%; text-align: center; }
     .pie-center strong { color: var(--sidebar-2); font-size: 20px; line-height: 1; }
-    .pie-center span { color: var(--muted); font-size: 11px; font-weight: 760; letter-spacing: .4px; text-transform: uppercase; }
+    .pie-center span { color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: .3px; text-transform: uppercase; line-height: 1.15; word-break: break-word; overflow-wrap: anywhere; }
     .chart-tooltip { position: fixed; z-index: 20; min-width: 180px; border: 1px solid #d8e3ea; border-radius: 8px; background: #fbfcfd; color: var(--ink); padding: 10px 11px; box-shadow: 0 14px 32px rgba(34,94,115,.20); pointer-events: none; }
     .chart-tooltip[hidden] { display: none; }
     .chart-tooltip b { display: block; margin-bottom: 6px; color: var(--sidebar-2); font-size: 12px; }
@@ -567,7 +574,8 @@ def render_index() -> str:
     .legend-chip { display: inline-flex; align-items: center; gap: 6px; }
     .legend-line { width: 18px; height: 3px; border-radius: 999px; background: var(--status-color); }
     .pie-legend { width: 100%; display: grid; gap: 7px; }
-    .legend-item { border: 1px solid transparent; border-radius: 7px; background: transparent; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; color: #4c5966; font-size: 12px; padding: 5px 7px; cursor: pointer; transition: background 150ms ease-out, border-color 150ms ease-out; }
+    .legend-item { border: 1px solid transparent; border-radius: 7px; background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; color: #4c5966; font-size: 12px; padding: 5px 7px; cursor: pointer; transition: background 150ms ease-out, border-color 150ms ease-out; text-align: left; }
+    .legend-item > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }
     .legend-item:hover, .legend-item.active { background: #eef5f7; border-color: #d8e3ea; }
     .legend-swatch { width: 9px; height: 9px; border-radius: 999px; background: var(--status-color); }
     .panel-state { color: var(--muted); font-size: 13px; padding: 4px 2px; }
@@ -939,15 +947,42 @@ def render_index() -> str:
                   <tbody id="comprasTemporalRows"></tbody>
                 </table>
               </div>
-              <div class="chart-wrap">
-                <canvas id="comprasTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de compras"></canvas>
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="comprasTemporalVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="comprasTemporalVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="comprasTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de compras"></canvas>
+                  <div class="chart-tooltip" id="comprasTemporalTooltip" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="comprasAnticiposSection" hidden>
+            <h2 class="section-title">Facturas de anticipo</h2>
+            <p class="section-subtitle">Pagos anticipados a proveedores por mes de emisión. Rojo: monto pendiente de vincular. Azul: monto vinculado a una factura definitiva. A medida que crece el azul, disminuye el rojo.</p>
+            <div class="section-body">
+              <div class="table-wrap">
+                <table class="data-table" id="comprasAnticiposTable">
+                  <thead><tr><th>Proveedor</th><th>N° doc</th><th>Fecha</th><th>Monto</th><th style="min-width:110px">Estado</th><th>Factura asociada</th></tr></thead>
+                  <tbody id="comprasAnticiposRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap" style="height:240px">
+                  <canvas class="weekly-chart" id="comprasAnticiposChart" width="760" height="240" aria-label="Anticipos vs regularizado por mes"></canvas>
+                  <div class="chart-tooltip" id="comprasAnticiposTooltip" hidden></div>
+                </div>
+                <div class="pie-legend" id="comprasAnticiposLegend" style="margin-top:10px"></div>
               </div>
             </div>
           </section>
 
           <section class="status-section" id="comprasStatusSection" hidden>
-            <h2 class="section-title">Estado de pago</h2>
-            <p class="section-subtitle">Distribucion de facturas por estado de pago.</p>
+            <h2 class="section-title">Estado de la factura</h2>
+            <p class="section-subtitle">Distribucion de facturas por estado del CFDI (Facturada / Cancelada / Sin status).</p>
             <div class="section-body pie-layout">
               <div class="table-wrap">
                 <table class="data-table">
@@ -969,22 +1004,49 @@ def render_index() -> str:
           <section class="status-section" id="comprasProvSection" hidden>
             <h2 class="section-title">Top 10 proveedores</h2>
             <p class="section-subtitle">Ranking por monto del periodo.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Proveedor</th><th>Facturas</th><th>Subtotal</th><th>Total c/IVA</th></tr></thead>
-                <tbody id="comprasProvRows"></tbody>
-              </table>
+            <div class="hbar-chart" id="comprasProvChart"></div>
+            <div class="chart-tooltip" id="comprasProvTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="comprasTipoSection" hidden>
+            <h2 class="section-title">Tipo de compra</h2>
+            <p class="section-subtitle">Distribucion de facturas por tipo de compra.</p>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Tipo</th><th>Facturas</th><th>Monto</th><th>%</th></tr></thead>
+                  <tbody id="comprasTipoRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="comprasTipoPie" width="520" height="520" aria-label="Tipo de compra" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="comprasTipoPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="pie-tooltip" id="comprasTipoTooltip" hidden></div>
+                <div class="pie-legend" id="comprasTipoLegend"></div>
+              </div>
             </div>
           </section>
 
-          <section class="status-section" id="comprasCxpSection" hidden>
-            <h2 class="section-title">Credito vivo (CxP)</h2>
-            <p class="section-subtitle">Proveedores con facturas pendientes de pago.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Proveedor</th><th>Facturas</th><th>Saldo pendiente</th></tr></thead>
-                <tbody id="comprasCxpRows"></tbody>
-              </table>
+          <section class="status-section" id="comprasCfdiSection" hidden>
+            <h2 class="section-title">Uso de CFDI</h2>
+            <p class="section-subtitle">Distribucion de facturas por tipo de uso de CFDI.</p>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Uso CFDI</th><th>Facturas</th><th>Monto</th><th>%</th></tr></thead>
+                  <tbody id="comprasCfdiRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="comprasCfdiPie" width="520" height="520" aria-label="Uso de CFDI compras" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="comprasCfdiPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="pie-tooltip" id="comprasCfdiTooltip" hidden></div>
+                <div class="pie-legend" id="comprasCfdiLegend"></div>
+              </div>
             </div>
           </section>
         </section>
@@ -1041,10 +1103,30 @@ def render_index() -> str:
     const comprasStatusPieCenter = document.querySelector('#comprasStatusPieCenter');
     const comprasStatusTooltip = document.querySelector('#comprasStatusTooltip');
     const comprasStatusLegend = document.querySelector('#comprasStatusLegend');
+    const comprasTemporalVistaMonto = document.querySelector('#comprasTemporalVistaMonto');
+    const comprasTemporalVistaCantidad = document.querySelector('#comprasTemporalVistaCantidad');
+    const comprasTemporalTooltip = document.querySelector('#comprasTemporalTooltip');
     const comprasProvSection = document.querySelector('#comprasProvSection');
-    const comprasProvRows = document.querySelector('#comprasProvRows');
-    const comprasCxpSection = document.querySelector('#comprasCxpSection');
-    const comprasCxpRows = document.querySelector('#comprasCxpRows');
+    const comprasProvChart = document.querySelector('#comprasProvChart');
+    const comprasProvTooltip = document.querySelector('#comprasProvTooltip');
+    const comprasTipoSection = document.querySelector('#comprasTipoSection');
+    const comprasTipoRows = document.querySelector('#comprasTipoRows');
+    const comprasTipoPie = document.querySelector('#comprasTipoPie');
+    const comprasTipoPieCenter = document.querySelector('#comprasTipoPieCenter');
+    const comprasTipoTooltip = document.querySelector('#comprasTipoTooltip');
+    const comprasTipoLegend = document.querySelector('#comprasTipoLegend');
+    const comprasTipoChart = { slices: [], activeIndex: null };
+    const comprasAnticiposSection = document.querySelector('#comprasAnticiposSection');
+    const comprasAnticiposRows = document.querySelector('#comprasAnticiposRows');
+    const comprasAnticiposChart = document.querySelector('#comprasAnticiposChart');
+    const comprasAnticiposTooltip = document.querySelector('#comprasAnticiposTooltip');
+    const comprasAnticiposLegend = document.querySelector('#comprasAnticiposLegend');
+    const comprasCfdiSection = document.querySelector('#comprasCfdiSection');
+    const comprasCfdiRows = document.querySelector('#comprasCfdiRows');
+    const comprasCfdiPie = document.querySelector('#comprasCfdiPie');
+    const comprasCfdiPieCenter = document.querySelector('#comprasCfdiPieCenter');
+    const comprasCfdiTooltip = document.querySelector('#comprasCfdiTooltip');
+    const comprasCfdiLegend = document.querySelector('#comprasCfdiLegend');
     const kpiGrid = document.querySelector('#kpiGrid');
     const estadoSection = document.querySelector('#estadoSection');
     const estadoRows = document.querySelector('#estadoRows');
@@ -1094,7 +1176,9 @@ def render_index() -> str:
     let facturacionEstadoChart = { slices: [], activeIndex: null };
     let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let comprasStatusChart = { slices: [], activeIndex: null };
-    let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null };
+    let comprasCfdiChart = { slices: [], activeIndex: null };
+    let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let comprasAnticiposState = { rows: [], periodos: [], activeIndex: null, points: [] };
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -1871,7 +1955,10 @@ def render_index() -> str:
       drawSemanaChart(semanaChartState.activeIndex);
       if (!tiemposAprSection.hidden) renderTiemposApr(window._lastTiemposApr);
       if (!comprasTemporalSection.hidden) drawComprasTemporalChart(comprasTemporalState.activeIndex);
+      if (!comprasAnticiposSection.hidden) drawComprasAnticiposChart(comprasAnticiposState.activeIndex);
       if (!comprasStatusSection.hidden) renderComprasStatusPie(comprasStatusChart.activeIndex);
+      if (!comprasTipoSection.hidden) renderComprasTipoPie(comprasTipoChart.activeIndex);
+      if (!comprasCfdiSection.hidden) renderComprasCfdiPie(comprasCfdiChart.activeIndex);
     });
 
     function resizeCanvasToDisplay(canvas, ctx) {
@@ -2400,11 +2487,12 @@ def render_index() -> str:
 
     function renderTopChart(container, tooltip, data, opts) {
       if (!data || !data.length) { container.closest('section')?.hidden === false && (container.innerHTML = ''); return; }
+      const labelField = opts.labelField || 'cliente';
       const maxM = Math.max(...data.map((d) => d[opts.barField]), 1);
       container.innerHTML = data.map((d, i) => {
         const pct = Math.max(2, Math.round((d[opts.barField] / maxM) * 100));
-        return `<div class="hbar-row" data-index="${i}" title="${escapeHtml(d.cliente)}">
-          <span class="hbar-label">${escapeHtml(d.cliente)}</span>
+        return `<div class="hbar-row" data-index="${i}" title="${escapeHtml(d[labelField])}">
+          <span class="hbar-label">${escapeHtml(d[labelField])}</span>
           <div class="hbar-track">
             <div class="hbar-fill" style="width:${pct}%;background:${opts.color}">
               <span class="hbar-fill-value">${formatMoney(d[opts.barField])}</span>
@@ -2795,7 +2883,7 @@ def render_index() -> str:
       }
     }
 
-    const COMPRAS_STATUS_COLORS = { 'Pagado': '#159895', 'No Pagado': '#e07b39' };
+    const COMPRAS_STATUS_COLORS = { 'Facturada': '#159895', 'Factura Cancelada': '#d96058', 'Sin status': '#d0b56b' };
     const COMPRAS_STATUS_COLORS_DEFAULT = ['#159895', '#e07b39', '#9b59b6', '#276f86', '#d0b56b', '#d96058'];
 
     function renderComprasStatusPie(activeIndex = null) {
@@ -2862,10 +2950,10 @@ def render_index() -> str:
         return;
       }
       const slice = comprasStatusChart.slices[comprasStatusChart.activeIndex];
-      comprasStatusPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.status)}</span>`;
+      comprasStatusPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
       if (event) { placeTooltipNear(comprasStatusTooltip, event.clientX, event.clientY); }
       comprasStatusTooltip.innerHTML = `
-        <b>${escapeHtml(slice.status)}</b>
+        <b>${escapeHtml(slice.estado)}</b>
         <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
         <div><span>Facturas</span><strong>${formatNumber(slice.qty)}</strong></div>
         <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
@@ -2873,16 +2961,16 @@ def render_index() -> str:
       comprasStatusTooltip.hidden = false;
     }
 
-    function renderComprasStatus(statusPago) {
-      const rows = [...(statusPago || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+    function renderComprasStatus(estadoFactura) {
+      const rows = [...(estadoFactura || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
       const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
       const totalQty = rows.reduce((s, r) => s + Number(r.n || 0), 0);
       if (!rows.length || !totalMonto) { comprasStatusSection.hidden = true; return; }
       comprasStatusRows.innerHTML = rows.map((row, index) => {
-        const color = COMPRAS_STATUS_COLORS[row.status] || COMPRAS_STATUS_COLORS_DEFAULT[index % COMPRAS_STATUS_COLORS_DEFAULT.length];
+        const color = COMPRAS_STATUS_COLORS[row.estado] || COMPRAS_STATUS_COLORS_DEFAULT[index % COMPRAS_STATUS_COLORS_DEFAULT.length];
         const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
         return `<tr data-index="${index}">
-          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.status)}</span></td>
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.estado)}</span></td>
           <td>${formatNumber(row.n)}</td>
           <td>${formatMoney(row.m)}</td>
         </tr>`;
@@ -2891,9 +2979,9 @@ def render_index() -> str:
       comprasStatusChart.slices = rows.map((row, index) => {
         const value = Number(row.m || 0);
         const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
-        const color = COMPRAS_STATUS_COLORS[row.status] || COMPRAS_STATUS_COLORS_DEFAULT[index % COMPRAS_STATUS_COLORS_DEFAULT.length];
+        const color = COMPRAS_STATUS_COLORS[row.estado] || COMPRAS_STATUS_COLORS_DEFAULT[index % COMPRAS_STATUS_COLORS_DEFAULT.length];
         const slice = {
-          status: row.status,
+          estado: row.estado,
           qty: Number(row.n || 0),
           monto: value,
           qtyPct: totalQty ? Number(row.n || 0) / totalQty : 0,
@@ -2908,7 +2996,7 @@ def render_index() -> str:
       comprasStatusLegend.innerHTML = comprasStatusChart.slices.map((slice, index) => `
         <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
           <span class="legend-swatch"></span>
-          <span>${escapeHtml(slice.status)}</span>
+          <span>${escapeHtml(slice.estado)}</span>
           <strong>${formatPercent(slice.montoPct)}</strong>
         </button>
       `).join('');
@@ -2944,11 +3032,14 @@ def render_index() -> str:
       const rows = comprasTemporalState.rows;
       if (!rows.length) return;
 
+      const esCantidad = comprasTemporalState.vista === 'cantidad';
+      const valField = esCantidad ? 'n' : 'tot';
+      const trendKey = esCantidad ? 'n' : 'tot';
       const barColor = '#159895';
       const pad = { left: 72, right: 24, top: 26, bottom: 46 };
       const plotW = width - pad.left - pad.right;
       const plotH = height - pad.top - pad.bottom;
-      const maxVal = Math.max(...rows.map((r) => r.tot), 1);
+      const maxVal = Math.max(...rows.map((r) => r[valField]), 1);
       const maxY = maxVal * 1.12;
       const slot = plotW / rows.length;
       const barW = Math.min(48, slot * 0.55);
@@ -2963,12 +3054,15 @@ def render_index() -> str:
         ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
         ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
-        ctx.fillText(formatMoney(maxY * (1 - i / 4)).replace('MXN', '').trim(), pad.left - 8, y);
+        const label = esCantidad
+          ? String(Math.round(maxY * (1 - i / 4)))
+          : formatMoney(maxY * (1 - i / 4)).replace('MXN', '').trim();
+        ctx.fillText(label, pad.left - 8, y);
       }
 
       rows.forEach((row, index) => {
         const centerX = pad.left + slot * index + slot / 2;
-        const h = (row.tot / maxY) * plotH;
+        const h = (row[valField] / maxY) * plotH;
         const x = centerX - barW / 2;
         const y = pad.top + plotH - h;
         const isActive = activeIndex === index;
@@ -2985,8 +3079,8 @@ def render_index() -> str:
       });
 
       const tendencias = comprasTemporalState.tendencias;
-      if (tendencias && tendencias.tot && rows.length > 1) {
-        const trend = tendencias.tot;
+      if (tendencias && tendencias[trendKey] && rows.length > 1) {
+        const trend = tendencias[trendKey];
         const n = rows.length;
         const x0 = pad.left + slot / 2;
         const xN = pad.left + slot * (n - 1) + slot / 2;
@@ -3023,17 +3117,37 @@ def render_index() -> str:
       ctx.fillStyle = '#65717e';
       ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('Barras: total c/IVA · Linea: tendencia', pad.left, 8);
+      ctx.fillText(esCantidad ? 'Barras: cantidad de facturas · Linea: tendencia' : 'Barras: total c/IVA · Linea: tendencia', pad.left, 8);
     }
 
     function setActiveComprasTemporal(index, event) {
       comprasTemporalState.activeIndex = index >= 0 ? index : null;
       drawComprasTemporalChart(comprasTemporalState.activeIndex);
       comprasTemporalRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === comprasTemporalState.activeIndex));
-      if (comprasTemporalState.activeIndex === null) { return; }
+      if (comprasTemporalState.activeIndex === null) {
+        comprasTemporalTooltip.hidden = true;
+        return;
+      }
       const row = comprasTemporalState.rows[comprasTemporalState.activeIndex];
       if (!row) return;
+      if (event) { placeTooltipNear(comprasTemporalTooltip, event.clientX, event.clientY); }
+      comprasTemporalTooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Facturas</span><strong>${formatNumber(row.n)}</strong></div>
+        <div><span>Subtotal</span><strong>${formatMoney(row.sub)}</strong></div>
+        <div><span>Total c/IVA</span><strong>${formatMoney(row.tot)}</strong></div>
+      `;
+      comprasTemporalTooltip.hidden = false;
     }
+
+    function setComprasTemporalVista(vista) {
+      comprasTemporalState.vista = vista;
+      comprasTemporalVistaMonto.classList.toggle('active', vista === 'monto');
+      comprasTemporalVistaCantidad.classList.toggle('active', vista === 'cantidad');
+      drawComprasTemporalChart(comprasTemporalState.activeIndex);
+    }
+    comprasTemporalVistaMonto.addEventListener('click', () => setComprasTemporalVista('monto'));
+    comprasTemporalVistaCantidad.addEventListener('click', () => setComprasTemporalVista('cantidad'));
 
     function renderComprasTemporal(temporal) {
       if (!temporal) return;
@@ -3084,33 +3198,290 @@ def render_index() -> str:
 
     function renderComprasProveedores(proveedores) {
       if (!proveedores || !proveedores.length) { comprasProvSection.hidden = true; return; }
-      comprasProvRows.innerHTML = proveedores.map((row) => `
-        <tr>
-          <td>${escapeHtml(row.proveedor || '—')}</td>
-          <td>${formatNumber(row.n)}</td>
-          <td>${formatMoney(row.sub)}</td>
-          <td>${formatMoney(row.tot)}</td>
-        </tr>
-      `).join('');
+      renderTopChart(comprasProvChart, comprasProvTooltip, proveedores, {
+        barField: 'tot',
+        labelField: 'proveedor',
+        color: '#159895',
+        tooltipFn: (d) => `
+          <b>${escapeHtml(d.proveedor || '—')}</b>
+          <div><span>Facturas</span><strong>${formatNumber(d.n)}</strong></div>
+          <div><span>Subtotal</span><strong>${formatMoney(d.sub)}</strong></div>
+          <div><span>Total c/IVA</span><strong>${formatMoney(d.tot)}</strong></div>
+        `,
+      });
       comprasProvSection.hidden = false;
     }
 
-    function renderComprasCxp(creditoVivo) {
-      if (!creditoVivo || !creditoVivo.length) { comprasCxpSection.hidden = true; return; }
-      comprasCxpRows.innerHTML = creditoVivo.map((row) => `
-        <tr>
-          <td>${escapeHtml(row.proveedor || '—')}</td>
+    const COMPRAS_TIPO_COLORS = ['#276f86','#159895','#e07b39','#9b59b6','#d0b56b','#d96058','#2ecc71','#3498db','#e74c3c','#95a5a6'];
+
+    function renderComprasTipoPie(activeIndex = null) {
+      const ctx = comprasTipoPie.getContext('2d');
+      const rect = comprasTipoPie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      comprasTipoPie.width = Math.max(1, Math.round(rect.width * dpr));
+      comprasTipoPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      comprasTipoChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd'; ctx.fill();
+      ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function comprasTipoSliceAtEvent(event) {
+      const rect = comprasTipoPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return comprasTipoChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveComprasTipo(index, event) {
+      comprasTipoChart.activeIndex = index >= 0 ? index : null;
+      renderComprasTipoPie(comprasTipoChart.activeIndex);
+      comprasTipoLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === comprasTipoChart.activeIndex));
+      comprasTipoRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === comprasTipoChart.activeIndex));
+      if (comprasTipoChart.activeIndex === null) {
+        comprasTipoTooltip.hidden = true;
+        comprasTipoPieCenter.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = comprasTipoChart.slices[comprasTipoChart.activeIndex];
+      comprasTipoPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.tipo)}</span>`;
+      if (event) { placeTooltipNear(comprasTipoTooltip, event.clientX, event.clientY); }
+      comprasTipoTooltip.innerHTML = `
+        <b>${escapeHtml(slice.tipo)}</b>
+        <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+        <div><span>Facturas</span><strong>${formatNumber(slice.qty)}</strong></div>
+        <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+      `;
+      comprasTipoTooltip.hidden = false;
+    }
+
+    function renderComprasTipo(tipoCompra) {
+      const rows = [...(tipoCompra || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
+      const totalQty = rows.reduce((s, r) => s + Number(r.n || 0), 0);
+      if (!rows.length || !totalMonto) { comprasTipoSection.hidden = true; return; }
+      comprasTipoRows.innerHTML = rows.map((row, index) => {
+        const color = COMPRAS_TIPO_COLORS[index % COMPRAS_TIPO_COLORS.length];
+        const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.tipo)}</span></td>
           <td>${formatNumber(row.n)}</td>
           <td>${formatMoney(row.m)}</td>
-        </tr>
+          <td>${formatPercent(montoPct)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="4">Sin datos.</td></tr>';
+      let current = -Math.PI / 2;
+      comprasTipoChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const color = COMPRAS_TIPO_COLORS[index % COMPRAS_TIPO_COLORS.length];
+        const slice = {
+          tipo: row.tipo, qty: Number(row.n || 0), monto: value,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color, start: current, end: current + span,
+        };
+        current += span;
+        return slice;
+      });
+      comprasTipoLegend.innerHTML = comprasTipoChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.tipo)}</span>
+          <strong>${formatPercent(slice.montoPct)}</strong>
+        </button>
       `).join('');
-      comprasCxpSection.hidden = false;
+      comprasTipoSection.hidden = false;
+      setActiveComprasTipo(null);
+      comprasTipoPie.addEventListener('mousemove', (event) => {
+        const index = comprasTipoSliceAtEvent(event);
+        if (index !== null && index >= 0) setActiveComprasTipo(index, event);
+        else setActiveComprasTipo(null);
+      });
+      comprasTipoPie.addEventListener('mouseleave', () => setActiveComprasTipo(null));
+      comprasTipoLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (item) setActiveComprasTipo(Number(item.dataset.index), event);
+      });
+      comprasTipoLegend.addEventListener('mouseleave', () => setActiveComprasTipo(null));
+      comprasTipoRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (row) setActiveComprasTipo(Number(row.dataset.index), event);
+      });
+      comprasTipoRows.addEventListener('mouseleave', () => setActiveComprasTipo(null));
+    }
+
+    const COMPRAS_CFDI_COLORS = ['#276f86','#159895','#e07b39','#9b59b6','#d0b56b','#d96058','#2ecc71','#3498db','#e74c3c','#95a5a6'];
+
+    function renderComprasCfdiPie(activeIndex = null) {
+      const ctx = comprasCfdiPie.getContext('2d');
+      const rect = comprasCfdiPie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      comprasCfdiPie.width = Math.max(1, Math.round(rect.width * dpr));
+      comprasCfdiPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      comprasCfdiChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function comprasCfdiSliceAtEvent(event) {
+      const rect = comprasCfdiPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return comprasCfdiChart.slices.findIndex((slice) => angle >= slice.start && angle <= slice.end);
+    }
+
+    function setActiveComprasCfdi(index, event) {
+      comprasCfdiChart.activeIndex = index >= 0 ? index : null;
+      renderComprasCfdiPie(comprasCfdiChart.activeIndex);
+      comprasCfdiLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === comprasCfdiChart.activeIndex));
+      comprasCfdiRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === comprasCfdiChart.activeIndex));
+      if (comprasCfdiChart.activeIndex === null) {
+        comprasCfdiTooltip.hidden = true;
+        comprasCfdiPieCenter.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = comprasCfdiChart.slices[comprasCfdiChart.activeIndex];
+      comprasCfdiPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.cfdi)}</span>`;
+      if (event) { placeTooltipNear(comprasCfdiTooltip, event.clientX, event.clientY); }
+      comprasCfdiTooltip.innerHTML = `
+        <b>${escapeHtml(slice.cfdi)}</b>
+        <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+        <div><span>Facturas</span><strong>${formatNumber(slice.qty)}</strong></div>
+        <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+      `;
+      comprasCfdiTooltip.hidden = false;
+    }
+
+    function renderComprasCfdi(usoCfdi) {
+      const rows = [...(usoCfdi || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
+      const totalQty = rows.reduce((s, r) => s + Number(r.n || 0), 0);
+      if (!rows.length || !totalMonto) { comprasCfdiSection.hidden = true; return; }
+      comprasCfdiRows.innerHTML = rows.map((row, index) => {
+        const color = COMPRAS_CFDI_COLORS[index % COMPRAS_CFDI_COLORS.length];
+        const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.cfdi)}</span></td>
+          <td>${formatNumber(row.n)}</td>
+          <td>${formatMoney(row.m)}</td>
+          <td>${formatPercent(montoPct)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="4">Sin datos.</td></tr>';
+      let current = -Math.PI / 2;
+      comprasCfdiChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const color = COMPRAS_CFDI_COLORS[index % COMPRAS_CFDI_COLORS.length];
+        const slice = {
+          cfdi: row.cfdi,
+          qty: Number(row.n || 0),
+          monto: value,
+          qtyPct: totalQty ? Number(row.n || 0) / totalQty : 0,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color,
+          start: current,
+          end: current + span,
+        };
+        current += span;
+        return slice;
+      });
+      comprasCfdiLegend.innerHTML = comprasCfdiChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.cfdi)}</span>
+          <strong>${formatPercent(slice.montoPct)}</strong>
+        </button>
+      `).join('');
+      comprasCfdiSection.hidden = false;
+      setActiveComprasCfdi(null);
+      comprasCfdiPie.addEventListener('mousemove', (event) => {
+        const index = comprasCfdiSliceAtEvent(event);
+        if (index !== null && index >= 0) setActiveComprasCfdi(index, event);
+      });
+      comprasCfdiPie.addEventListener('mouseleave', () => setActiveComprasCfdi(null));
+      comprasCfdiLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (item) setActiveComprasCfdi(Number(item.dataset.index), event);
+      });
+      comprasCfdiLegend.addEventListener('mouseleave', () => setActiveComprasCfdi(null));
+      comprasCfdiRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (row) setActiveComprasCfdi(Number(row.dataset.index), event);
+      });
+      comprasCfdiRows.addEventListener('mouseleave', () => setActiveComprasCfdi(null));
     }
 
     function renderCompras(body) {
       const kpis = body.kpis || {};
-      const cxpWarning = Number(kpis.cxp || 0) > 0 ? 'warning' : '';
-      const pctPagado = Number(kpis.pct_pagado || 0);
+      const anticipos = body.anticipos || {};
+      const antKpis = anticipos.kpis || {};
+      const nCanc = Number(kpis.n_canc || 0);
+      const cancClass = nCanc > 0 ? 'warning' : '';
+      const ivaDiff = Number(kpis.iva_diff_fc || 0);
+      const ivaDiffClass = Math.abs(ivaDiff) >= 1 ? 'warning' : 'accent';
+      const nAnt = Number(antKpis.n_ant || 0);
+      const nAntPend = Number(antKpis.n_ant_pendientes || 0);
+      const antPendClass = nAntPend > 0 ? 'warning' : '';
+      const nTotal = Number(kpis.n_fc || 0) + nAntPend;
+      const montoTotal = Number(kpis.tot_fc || 0) + Number(antKpis.monto_pendientes || 0);
       const cards = [
         `<article class="kpi-card primary">
           <h2>Facturas recibidas</h2>
@@ -3120,38 +3491,210 @@ def render_index() -> str:
           </div>
           ${metric('Subtotal', kpiValue(kpis, 'sub_fc', 'money'), 'Sin IVA ni envio')}
         </article>`,
-        `<article class="kpi-card accent">
-          <h2>Pagadas</h2>
-          <div class="kpi-pair">
-            ${metric('Facturas pagadas', kpiValue(kpis, 'n_fcp', 'number'), 'Registros pagados')}
-            ${metric('Monto pagado', kpiValue(kpis, 'tot_fcp', 'money'), 'Total c/IVA pagado')}
-          </div>
-          ${metric('% pagado', kpiValue(kpis, 'pct_pagado', 'percent'), 'Pagado / total recibido')}
-        </article>`,
-        `<article class="kpi-card ${cxpWarning}">
-          <h2>Credito vivo (CxP)</h2>
-          <div class="kpi-pair">
-            ${metric('Facturas pendientes', kpiValue(kpis, 'n_no_pag', 'number'), 'Con status No Pagado')}
-            ${metric('Saldo pendiente', kpiValue(kpis, 'cxp', 'money'), 'Monto No Pagado')}
-          </div>
-          ${metric('IVA recibido', kpiValue(kpis, 'iva_fc', 'money'), 'IVA acreditable')}
-        </article>`,
         `<article class="kpi-card">
-          <h2>Tiempos de pago</h2>
+          <h2>Total del periodo</h2>
           <div class="kpi-pair">
-            ${metric('Dias prom.', kpiValue(kpis, 't_pago_avg', 'number'), 'Promedio factura a pago')}
-            ${metric('Mediana', kpiValue(kpis, 't_pago_med', 'number'), 'Mediana de dias')}
+            ${metric('Total facturas', kpiValue({v: nTotal}, 'v', 'number'), 'Recibidas + anticipos pendientes')}
+            ${metric('Monto total', kpiValue({v: montoTotal}, 'v', 'money'), 'Facturas + anticipos pendientes')}
           </div>
-          ${metric('Maximo', kpiValue(kpis, 't_pago_max', 'number'), 'Dias maximo registrado')}
+          <div class="kpi-pair">
+            ${metric('Recibidas', kpiValue(kpis, 'n_fc', 'number'), 'Facturas definitivas')}
+            ${metric('Anticipos pendientes', kpiValue(antKpis, 'n_ant_pendientes', 'number'), 'Sin factura definitiva')}
+          </div>
+        </article>`,
+        `<article class="kpi-card ${ivaDiffClass}">
+          <h2>IVA acreditable</h2>
+          <div class="kpi-pair">
+            ${metric('IVA recibido', kpiValue(kpis, 'iva_fc', 'money'), 'Total − Subtotal − Envío')}
+            ${metric('IVA teórico (16%)', kpiValue(kpis, 'iva_real_fc', 'money'), 'Subtotal × 16%')}
+          </div>
+          <div class="kpi-pair">
+            ${metric('Diferencia', kpiValue(kpis, 'iva_diff_fc', 'money'), 'Recibido − teórico')}
+            ${metric('Diferencia %', kpiValue(kpis, 'iva_diff_pct_fc', 'percent'), 'Diferencia / IVA teórico')}
+          </div>
+        </article>`,
+        `<article class="kpi-card ${cancClass}">
+          <h2>Canceladas</h2>
+          <div class="kpi-pair">
+            ${metric('Facturas canceladas', kpiValue(kpis, 'n_canc', 'number'), 'Del periodo')}
+            ${metric('Monto cancelado', kpiValue(kpis, 'tot_canc', 'money'), 'Total c/IVA')}
+          </div>
+          <p class="kpi-note">Excluidas de los totales</p>
         </article>`,
       ];
+      if (nAnt > 0) {
+        cards.push(`<article class="kpi-card ${antPendClass}">
+          <h2>Anticipos</h2>
+          <div class="kpi-pair">
+            ${metric('Anticipos del periodo', kpiValue(antKpis, 'n_ant', 'number'), 'Procesados por proveedor')}
+            ${metric('Monto anticipado', kpiValue(antKpis, 'monto_ant', 'money'), 'Total emitido')}
+          </div>
+          <div class="kpi-pair">
+            ${metric('Pendientes', kpiValue(antKpis, 'n_ant_pendientes', 'number'), 'Sin factura definitiva')}
+            ${metric('Monto pendiente', kpiValue(antKpis, 'monto_pendientes', 'money'), 'Por regularizar')}
+          </div>
+        </article>`);
+      }
       comprasKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
       renderComprasTemporal(body.series?.temporal);
-      renderComprasStatus(body.series?.status_pago || []);
+      renderComprasAnticipos(anticipos);
+      renderComprasStatus(body.series?.estado_factura || []);
       renderComprasProveedores(body.tables?.top_proveedores || []);
-      renderComprasCxp(body.tables?.credito_vivo || []);
+      renderComprasTipo(body.series?.tipo_compra || []);
+      renderComprasCfdi(body.series?.uso_cfdi || []);
     }
+
+    function renderComprasAnticipos(anticipos) {
+      const kpis = anticipos?.kpis || {};
+      const tabla = anticipos?.tabla || [];
+      const temporal = anticipos?.temporal || { periodos: [] };
+      if (!Number(kpis.n_ant || 0)) {
+        comprasAnticiposSection.hidden = true;
+        comprasAnticiposLegend.innerHTML = '';
+        return;
+      }
+      comprasAnticiposState.rows = tabla.slice();
+      comprasAnticiposState.periodos = (temporal.periodos || []).map((p) => ({
+        key: p.key || '',
+        etiqueta: p.etiqueta || p.key || '',
+        pendiente: Number(p.monto_pendiente || 0),
+        regularizado: Number(p.monto_regularizado || 0),
+        n_anticipos: Number(p.n_anticipos || 0),
+      }));
+      comprasAnticiposState.activeIndex = null;
+      comprasAnticiposRows.innerHTML = tabla.map((row, index) => {
+        const badge = row.regularizado
+          ? `<span class="pill success">Regularizado</span>`
+          : `<span class="pill error">Pendiente</span>`;
+        const factura = row.regularizado
+          ? `<strong>${escapeHtml(row.factura_asociada_numero || '—')}</strong>`
+          : '—';
+        return `<tr data-index="${index}">
+          <td>${escapeHtml(row.proveedor || '')}</td>
+          <td>${escapeHtml(row.numero_documento || '')}</td>
+          <td>${escapeHtml(row.fecha || '')}</td>
+          <td>${formatMoney(row.monto)}</td>
+          <td>${badge}</td>
+          <td>${factura}</td>
+        </tr>`;
+      }).join('');
+      comprasAnticiposLegend.innerHTML = `
+        <span class="legend-item" style="--status-color:#d96058"><span class="legend-swatch"></span><span>Pendiente</span></span>
+        <span class="legend-item" style="--status-color:#4b8bd4"><span class="legend-swatch"></span><span>Vinculado</span></span>
+      `;
+      comprasAnticiposSection.hidden = false;
+      drawComprasAnticiposChart(null);
+    }
+
+    function drawComprasAnticiposChart(activeIndex = null) {
+      const ctx = comprasAnticiposChart.getContext('2d');
+      const rect = resizeCanvasToDisplay(comprasAnticiposChart, ctx);
+      const width = rect.width;
+      const height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      const periodos = comprasAnticiposState.periodos;
+      if (!periodos.length) { comprasAnticiposState.points = []; return; }
+
+      const colorPendiente = '#d96058';
+      const colorVinculado = '#4b8bd4';
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const maxVal = Math.max(...periodos.map((p) => Math.max(p.pendiente, p.regularizado)), 1);
+      const maxY = maxVal * 1.18;
+      const slot = plotW / periodos.length;
+      const pairW = Math.min(80, slot * 0.65);
+      const barW = (pairW - 4) / 2;
+      comprasAnticiposState.points = [];
+
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        ctx.fillText(formatMoney(maxY * (1 - i / 4)).replace('MXN', '').trim(), pad.left - 8, y);
+      }
+
+      periodos.forEach((p, index) => {
+        const centerX = pad.left + slot * index + slot / 2;
+        const pendH = (p.pendiente / maxY) * plotH;
+        const regH = (p.regularizado / maxY) * plotH;
+        const yBase = pad.top + plotH;
+        const xLeft = centerX - pairW / 2;
+        const xRight = xLeft + barW + 4;
+        const isActive = activeIndex === index;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.35;
+        // Barra izquierda: Pendiente (rojo)
+        if (p.pendiente > 0) {
+          drawRoundRect(ctx, xLeft, yBase - pendH, barW, pendH, 5);
+          ctx.fillStyle = colorPendiente; ctx.fill();
+        }
+        // Barra derecha: Vinculado (azul)
+        if (p.regularizado > 0) {
+          drawRoundRect(ctx, xRight, yBase - regH, barW, regH, 5);
+          ctx.fillStyle = colorVinculado; ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+        ctx.font = `${isActive ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(p.etiqueta, centerX, pad.top + plotH + 14);
+        comprasAnticiposState.points.push({ x: centerX, y: yBase - Math.max(pendH, regH), slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), periodo: p });
+      });
+
+      ctx.fillStyle = '#65717e';
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText('Anticipos por mes: pendiente (rojo) | vinculado a factura (azul)', pad.left, 8);
+    }
+
+    function setActiveComprasAnticipos(index, event) {
+      comprasAnticiposState.activeIndex = index >= 0 ? index : null;
+      drawComprasAnticiposChart(comprasAnticiposState.activeIndex);
+      if (comprasAnticiposState.activeIndex === null) {
+        comprasAnticiposTooltip.hidden = true;
+        return;
+      }
+      const periodo = comprasAnticiposState.periodos[comprasAnticiposState.activeIndex];
+      if (!periodo) return;
+      if (event) placeTooltipNear(comprasAnticiposTooltip, event.clientX, event.clientY);
+      comprasAnticiposTooltip.innerHTML = `
+        <b>${escapeHtml(periodo.etiqueta)}</b>
+        <div><span>Anticipos</span><strong>${formatNumber(periodo.n_anticipos)}</strong></div>
+        <div><span>Pendiente</span><strong>${formatMoney(periodo.pendiente)}</strong></div>
+        <div><span>Vinculado</span><strong>${formatMoney(periodo.regularizado)}</strong></div>
+      `;
+      comprasAnticiposTooltip.hidden = false;
+    }
+
+    comprasAnticiposChart.addEventListener('mousemove', (event) => {
+      const points = comprasAnticiposState.points;
+      if (!points.length) return;
+      const rect = comprasAnticiposChart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const idx = points.findIndex((p) => x >= p.slotLeft && x < p.slotRight);
+      if (idx >= 0) setActiveComprasAnticipos(idx, event);
+      else setActiveComprasAnticipos(null);
+    });
+    comprasAnticiposChart.addEventListener('mouseleave', () => setActiveComprasAnticipos(null));
+    comprasAnticiposRows.addEventListener('mousemove', (event) => {
+      const tr = event.target.closest('tr');
+      if (!tr) return;
+      const anticipoIndex = Number(tr.dataset.index);
+      const anticipo = comprasAnticiposState.rows[anticipoIndex];
+      if (!anticipo) return;
+      // Cada anticipo se grafica en su mes de emisión.
+      const key = (anticipo.fecha || '').slice(0, 7);
+      const idx = comprasAnticiposState.periodos.findIndex((p) => p.key === key);
+      if (idx >= 0) setActiveComprasAnticipos(idx, event);
+    });
+    comprasAnticiposRows.addEventListener('mouseleave', () => setActiveComprasAnticipos(null));
+
 
     async function loadCompras() {
       if (comprasLoaded) return;

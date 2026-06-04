@@ -87,6 +87,15 @@ def find_latest_csv(data_dir, prefix):
         )
     return sorted(matches, key=lambda path: (os.path.getmtime(path), path))[-1]
 
+def find_latest_facturacion_csv(data_dir, prefix):
+    from pathlib import Path
+    root = Path(data_dir)
+    pattern = re.compile(rf"^{re.escape(prefix)}\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}-\d{{2}}\.csv$")
+    matches = [p for p in root.glob(f"{prefix}*.csv") if p.is_file() and pattern.match(p.name)]
+    if not matches:
+        raise FileNotFoundError(f"No se encontro {prefix}*.csv en la carpeta de datos: {root.resolve()}")
+    return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
+
 def load_cotizaciones(data_dir="data"):
     return read_csv(find_latest_csv(data_dir, "Cotizaciones"))
 
@@ -841,6 +850,20 @@ def build_ventas_dashboard(cot, period_label="Periodo actual", fecha_desde=None,
         "signals": signals,
     }
 
+def _parse_anticipos_ids(raw):
+    """Parsea la columna Factura_Anticipo_Asociada (string JSON con array de UUIDs)."""
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    try:
+        lst = json.loads(s)
+    except Exception:
+        return []
+    if not isinstance(lst, list):
+        return []
+    return [str(x).strip() for x in lst if str(x).strip()]
+
+
 def _norm_fc_row(row):
     """Normaliza una fila de Facturas_Compras a estructura unificada.
     Soporta el formato antiguo (property_*) y el nuevo (Factura_compra_*)."""
@@ -851,28 +874,48 @@ def _norm_fc_row(row):
         tot = f(row.get("Factura_compra_total", 0)) or sub + iva + env
         return {
             "nombre": row.get("Factura_compra_nombre", ""),
+            "numero": (row.get("#_Factura_compra", "") or "").strip(),
             "sub": sub, "iva": iva, "env": env, "tot": tot,
             "fecha": row.get("Facatura_compra_fecha_factura", ""),  # typo en export n8n
             "tipo_pago": parse_tp(row.get("Factura_compra_tipo", "")),
             "cfdi": (row.get("Factura_compra_uso_cfdi", "") or "Sin CFDI").strip() or "Sin CFDI",
-            "status_pago": (row.get("Factura_compra_estatus_factura", "") or "Sin status").strip() or "Sin status",
+            "estado_factura": (row.get("Factura_compra_estatus_factura", "") or "Sin status").strip() or "Sin status",
             "fecha_pago": "",
+            "anticipos_ids": _parse_anticipos_ids(row.get("Factura_Anticipo_Asociada", "")),
         }
     sub = f(row.get("property_subtotal_f", 0))
     iva = f(row.get("property_iva_16", 0))
     env = f(row.get("property_costo_de_envio", 0))
     return {
         "nombre": row.get("name", ""),
+        "numero": (row.get("property_numero_factura", "") or "").strip(),
         "sub": sub, "iva": iva, "env": env, "tot": sub + iva + env,
         "fecha": row.get("property_fecha_de_factura.start", ""),
         "tipo_pago": parse_tp(row.get("property_tipo_de_pago.0", "")),
         "cfdi": (row.get("property_uso_cfdi", "") or "Sin CFDI").strip() or "Sin CFDI",
-        "status_pago": (row.get("property_status_de_pago", "") or "Sin status").strip() or "Sin status",
+        "estado_factura": (row.get("property_status_de_pago", "") or "Sin status").strip() or "Sin status",
         "fecha_pago": row.get("property_fecha_de_pago", ""),
+        "anticipos_ids": [],
     }
 
 
-def build_compras_dashboard(fc, fcp, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+def _norm_anticipo_row(row):
+    """Normaliza una fila de Facturas_Anticipo a estructura unificada."""
+    return {
+        "id": (row.get("Factura_anticipo_id", "") or "").strip(),
+        "nombre": row.get("Factura_anticipo_nombre", "") or "",
+        "prov_siglas": (row.get("Factura_anticipo_Proveedor_Siglas", "") or "").strip(),
+        "prov_nombre": (row.get("Factura_anticipo_Proveedor_nombre", "") or "").strip(),
+        "numero": (row.get("Factura_anticipo_numero_documento", "") or "").strip(),
+        "fecha": row.get("Factura_anticipo_fecha_emision", "") or "",
+        "estado": (row.get("Factura_anticipo_estado", "") or "Sin estado").strip() or "Sin estado",
+        "monto": f(row.get("Factura_anticipo_monto", 0)),
+        "tipo_documento": (row.get("Factura_anticipo_tipo_documento", "") or "").strip(),
+        "uso_cfdi": (row.get("Factura_anticipo_uso_CFDI", "") or "Sin CFDI").strip() or "Sin CFDI",
+    }
+
+
+def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
     _s = parse_date(fecha_desde)
     _e = parse_date(fecha_hasta)
     start_d = _s.date() if _s else None
@@ -884,74 +927,68 @@ def build_compras_dashboard(fc, fcp, period_label="Periodo actual", fecha_desde=
         d = dt.date()
         return (not start_d or d >= start_d) and (not end_d or d <= end_d)
 
-    fc_norm  = [_norm_fc_row(r) for r in fc  if in_period_d(_norm_fc_row(r)["fecha"])]
-    fcp_norm = [_norm_fc_row(r) for r in fcp if in_period_d(_norm_fc_row(r)["fecha"])]
+    # Normalizar TODAS las filas primero para resolver anticipos referenciados
+    # incluso por facturas fuera del rango de fechas seleccionado.
+    fc_all_norm   = [_norm_fc_row(r) for r in fc]
+    fc_all_active = [r for r in fc_all_norm if r["estado_factura"] != "Factura Cancelada"]
+    # Set de UUIDs de anticipos consumidos por alguna factura ACTIVA (cualquier periodo).
+    # Una factura cancelada NO regulariza al anticipo: vuelve a pendiente automáticamente.
+    referenced_ids = set()
+    for r in fc_all_active:
+        referenced_ids.update(r.get("anticipos_ids", []))
 
-    # Totales facturas compras
-    n_fc   = len(fc_norm)
-    sub_fc = round(sum(r["sub"] for r in fc_norm), 2)
-    iva_fc = round(sum(r["iva"] for r in fc_norm), 2)
-    tot_fc = round(sum(r["tot"] for r in fc_norm), 2)
+    # KPIs y series de facturas: solo periodo seleccionado.
+    fc_norm   = [r for r in fc_all_norm if in_period_d(r["fecha"])]
+    fc_active = [r for r in fc_norm if r["estado_factura"] != "Factura Cancelada"]
+    fc_canc   = [r for r in fc_norm if r["estado_factura"] == "Factura Cancelada"]
 
-    # Totales pagadas
-    n_fcp   = len(fcp_norm)
-    sub_fcp = round(sum(r["sub"] for r in fcp_norm), 2)
-    tot_fcp = round(sum(r["tot"] for r in fcp_norm), 2)
+    # Totales (excluyen canceladas)
+    n_fc   = len(fc_active)
+    sub_fc = round(sum(r["sub"] for r in fc_active), 2)
+    env_fc = round(sum(r["env"] for r in fc_active), 2)
+    tot_fc = round(sum(r["tot"] for r in fc_active), 2)
+    # IVA recibido: derivado del total realmente reportado en las facturas
+    iva_fc = round(tot_fc - sub_fc - env_fc, 2)
+    # IVA acreditable teórico al 16%
+    iva_real_fc = round(sub_fc * 0.16, 2)
+    iva_diff_fc = round(iva_fc - iva_real_fc, 2)
+    iva_diff_pct_fc = (iva_diff_fc / iva_real_fc) if iva_real_fc else 0
 
-    # Status de pago
-    sp_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
+    # Canceladas (métrica de control de calidad)
+    n_canc   = len(fc_canc)
+    tot_canc = round(sum(r["tot"] for r in fc_canc), 2)
+
+    # Estado de la factura (sobre fc_norm completo para visibilidad de canceladas)
+    ef_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
     for r in fc_norm:
-        sp_fc[r["status_pago"]]["n"] += 1
-        sp_fc[r["status_pago"]]["m"] += r["tot"]
+        ef_fc[r["estado_factura"]]["n"] += 1
+        ef_fc[r["estado_factura"]]["m"] += r["tot"]
 
-    no_pag   = [r for r in fc_norm if r["status_pago"] == "No Pagado"]
-    n_no_pag = len(no_pag)
-    cxp      = round(sp_fc.get("No Pagado", {"m": 0.0})["m"], 2)
-
-    # Tipo de pago
+    # Tipo de compra (solo facturas activas; campo vacío/Sin tipo → "Productos vendibles")
     tp_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
-    for r in fc_norm:
-        tp_fc[r["tipo_pago"] or "Sin tipo"]["n"] += 1
-        tp_fc[r["tipo_pago"] or "Sin tipo"]["m"] += r["tot"]
+    for r in fc_active:
+        tipo = r["tipo_pago"] if r["tipo_pago"] and r["tipo_pago"] != "Sin tipo" else "Productos vendibles"
+        tp_fc[tipo]["n"] += 1
+        tp_fc[tipo]["m"] += r["tot"]
 
-    # Top 10 proveedores
+    # Top 10 proveedores (solo facturas activas)
     prov_fc = defaultdict(lambda: {"n": 0, "sub": 0.0, "tot": 0.0})
-    for r in fc_norm:
+    for r in fc_active:
         p = prov_name(r["nombre"])
         prov_fc[p]["n"] += 1
         prov_fc[p]["sub"] += r["sub"]
         prov_fc[p]["tot"] += r["tot"]
     top_prov = sorted(prov_fc.items(), key=lambda x: -x[1]["tot"])[:10]
 
-    # Crédito vivo
-    cred_vivo_acc = defaultdict(lambda: {"n": 0, "m": 0.0})
-    for r in no_pag:
-        p = prov_name(r["nombre"])
-        cred_vivo_acc[p]["n"] += 1
-        cred_vivo_acc[p]["m"] += r["tot"]
-    cred_vivo = sorted(cred_vivo_acc.items(), key=lambda x: -x[1]["m"])[:10]
+    # Uso de CFDI (solo facturas activas)
+    cfdi_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in fc_active:
+        cfdi_fc[r["cfdi"] or "Sin CFDI"]["n"] += 1
+        cfdi_fc[r["cfdi"] or "Sin CFDI"]["m"] += r["tot"]
 
-    # Top 10 proveedores pagados
-    prov_fcp = defaultdict(lambda: {"n": 0, "m": 0.0})
-    for r in fcp_norm:
-        p = prov_name(r["nombre"])
-        prov_fcp[p]["n"] += 1
-        prov_fcp[p]["m"] += r["tot"]
-    top_prov_pag = sorted(prov_fcp.items(), key=lambda x: -x[1]["m"])[:10]
-
-    # Días factura→pago (solo si el row tiene fecha_pago, formato antiguo)
-    t_fc_pago = []
-    for r in fcp_norm:
-        if not r["fecha_pago"]: continue
-        df = parse_date(r["fecha"])
-        dp = parse_date(r["fecha_pago"])
-        d = days_diff(df, dp)
-        if d is not None and d < 365:
-            t_fc_pago.append(d)
-
-    # Temporal — usa filas originales para que aggregate_temporal maneje el date_getter
+    # Temporal (solo facturas activas)
     temporal = aggregate_temporal(
-        fc_norm,
+        fc_active,
         date_getter=lambda row: row["fecha"],
         metric_getters={
             "n":   lambda row: 1,
@@ -968,32 +1005,126 @@ def build_compras_dashboard(fc, fcp, period_label="Periodo actual", fecha_desde=
         "tot": linear_trend([p["tot"] for p in periods]),
     }
 
+    # ─── Anticipos ──────────────────────────────────────────────────────────
+    ant_all_norm = [_norm_anticipo_row(r) for r in (anticipos or [])]
+    ant_in_period = [a for a in ant_all_norm if in_period_d(a["fecha"])]
+
+    # Index: anticipo_id -> primera factura activa (cualquier periodo) que lo regulariza.
+    ant_to_factura = {}
+    for r in fc_all_active:
+        for aid in r.get("anticipos_ids", []):
+            ant_to_factura.setdefault(aid, r)
+
+    for a in ant_in_period:
+        regulariza = ant_to_factura.get(a["id"])
+        a["regularizado"] = regulariza is not None
+        a["factura_asociada_numero"] = (regulariza.get("numero") if regulariza else "") or ""
+        a["factura_asociada_nombre"] = (regulariza.get("nombre") if regulariza else "") or ""
+
+    pendientes = [a for a in ant_in_period if not a["regularizado"]]
+    regularizados = [a for a in ant_in_period if a["regularizado"]]
+
+    n_ant = len(ant_in_period)
+    monto_ant = round(sum(a["monto"] for a in ant_in_period), 2)
+    n_ant_pendientes = len(pendientes)
+    monto_pendientes = round(sum(a["monto"] for a in pendientes), 2)
+    n_ant_regularizados = len(regularizados)
+    monto_regularizados = round(sum(a["monto"] for a in regularizados), 2)
+
+    # Serie temporal apilada: ambas series usan la fecha de emisión del anticipo.
+    # Rojo = pendientes, verde = regularizados, apilados en el mes de emisión.
+    if ant_in_period:
+        ant_axis = temporal_axis(
+            fecha_desde,
+            fecha_hasta,
+            dates=[a["fecha"] for a in ant_in_period],
+        )
+        ant_series = aggregate_temporal(
+            ant_in_period,
+            date_getter=lambda row: row["fecha"],
+            metric_getters={
+                "monto_pendiente": lambda row: row["monto"] if not row["regularizado"] else 0,
+                "monto_regularizado": lambda row: row["monto"] if row["regularizado"] else 0,
+                "n_anticipos": lambda row: 1,
+            },
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            axis=ant_axis,
+        )
+        ant_temporal = {
+            **ant_axis,
+            "periodos": [
+                {
+                    **p,
+                    "monto_pendiente": round(p["monto_pendiente"], 2),
+                    "monto_regularizado": round(p["monto_regularizado"], 2),
+                }
+                for p in ant_series["periodos"]
+            ],
+        }
+    else:
+        ant_temporal = {"granularidad": "mes", "keys": [], "labels": [], "periodos": []}
+
+    def _iso_date(s):
+        dt = parse_date(s)
+        return dt.date().isoformat() if dt else ""
+
+    ant_tabla = sorted(
+        [
+            {
+                "id": a["id"],
+                "proveedor": a["prov_nombre"] or a["prov_siglas"] or prov_name(a["nombre"]),
+                "numero_documento": a["numero"],
+                "fecha": _iso_date(a["fecha"]),
+                "monto": round(a["monto"], 2),
+                "estado": a["estado"],
+                "uso_cfdi": a["uso_cfdi"],
+                "regularizado": a["regularizado"],
+                "factura_asociada_numero": a["factura_asociada_numero"],
+                "factura_asociada_nombre": a["factura_asociada_nombre"],
+            }
+            for a in ant_in_period
+        ],
+        key=lambda x: (x["fecha"] or "", -x["monto"]),
+        reverse=True,
+    )
+
     return {
         "periodo": period_label,
         "kpis": {
             "n_fc": n_fc,
             "sub_fc": sub_fc,
             "iva_fc": iva_fc,
+            "iva_real_fc": iva_real_fc,
+            "iva_diff_fc": iva_diff_fc,
+            "iva_diff_pct_fc": iva_diff_pct_fc,
             "tot_fc": tot_fc,
-            "n_fcp": n_fcp,
-            "sub_fcp": sub_fcp,
-            "tot_fcp": tot_fcp,
-            "cxp": cxp,
-            "n_no_pag": n_no_pag,
-            "t_pago_avg": round(avg(t_fc_pago), 1),
-            "t_pago_med": round(med(t_fc_pago), 1),
-            "t_pago_max": max(t_fc_pago) if t_fc_pago else 0,
-            "pct_pagado": round(tot_fcp / tot_fc, 4) if tot_fc else 0,
+            "n_canc": n_canc,
+            "tot_canc": tot_canc,
         },
         "series": {
             "temporal": temporal,
-            "status_pago": [{"status": k, **v} for k, v in sp_fc.items()],
-            "tipo_pago": [{"tipo": k, **v} for k, v in tp_fc.items()],
+            "estado_factura": [{"estado": k, **v} for k, v in ef_fc.items()],
+            "tipo_compra": [{"tipo": k, **v} for k, v in tp_fc.items()],
+            "uso_cfdi": sorted(
+                [{"cfdi": k, **v} for k, v in cfdi_fc.items()],
+                key=lambda x: -x["m"],
+            ),
         },
         "tables": {
             "top_proveedores": [{"proveedor": k, **v} for k, v in top_prov],
-            "credito_vivo": [{"proveedor": k, **v} for k, v in cred_vivo],
-            "top_proveedores_pag": [{"proveedor": k, **v} for k, v in top_prov_pag],
+        },
+        "anticipos": {
+            "kpis": {
+                "n_ant": n_ant,
+                "monto_ant": monto_ant,
+                "n_ant_pendientes": n_ant_pendientes,
+                "monto_pendientes": monto_pendientes,
+                "n_ant_regularizados": n_ant_regularizados,
+                "monto_regularizados": monto_regularizados,
+            },
+            "tabla": ant_tabla,
+            "temporal": ant_temporal,
         },
     }
 
