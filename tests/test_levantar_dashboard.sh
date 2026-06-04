@@ -18,6 +18,7 @@ required_patterns=(
   'BASE_URL="http://localhost:8000"'
   '$BASE_URL/'
   '$BASE_URL/api/dashboard/ventas'
+  '$BASE_URL/api/dashboard/facturacion'
   '/docs'
   '/openapi.json'
 )

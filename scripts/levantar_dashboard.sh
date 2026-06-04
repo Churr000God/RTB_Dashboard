@@ -6,10 +6,14 @@ SERVICE="dashboard-rtb"
 BASE_URL="http://localhost:8000"
 MAX_ATTEMPTS=30
 TMP_JSON=""
+TMP_FACTURACION_JSON=""
 
 cleanup() {
   if [[ -n "$TMP_JSON" ]]; then
     rm -f "$TMP_JSON"
+  fi
+  if [[ -n "$TMP_FACTURACION_JSON" ]]; then
+    rm -f "$TMP_FACTURACION_JSON"
   fi
 }
 
@@ -61,7 +65,7 @@ printf 'Ejecutando pruebas unitarias dentro del contenedor...\n'
 docker compose exec -T dashboard-rtb python3 -m unittest discover -s tests -v ||
   fail "fallaron las pruebas unitarias"
 
-printf 'Verificando UI y API de ventas...\n'
+printf 'Verificando UI, API de ventas y API de facturacion...\n'
 curl --silent --show-error --fail --output /dev/null "$BASE_URL/" ||
   fail "la portada no respondio correctamente"
 
@@ -72,8 +76,16 @@ curl --silent --show-error --fail --output "$TMP_JSON" "$BASE_URL/api/dashboard/
 python3 -m json.tool "$TMP_JSON" >/dev/null ||
   fail "la API de ventas no devolvio JSON valido"
 
+TMP_FACTURACION_JSON="$(mktemp)"
+curl --silent --show-error --fail --output "$TMP_FACTURACION_JSON" "$BASE_URL/api/dashboard/facturacion" ||
+  fail "la API de facturacion no respondio correctamente"
+
+python3 -m json.tool "$TMP_FACTURACION_JSON" >/dev/null ||
+  fail "la API de facturacion no devolvio JSON valido"
+
 printf '\nDashboard RTB disponible:\n'
 printf 'Dashboard:    %s/\n' "$BASE_URL"
-printf 'API ventas:   %s/api/dashboard/ventas\n' "$BASE_URL"
+printf 'API ventas:       %s/api/dashboard/ventas\n' "$BASE_URL"
+printf 'API facturacion:  %s/api/dashboard/facturacion\n' "$BASE_URL"
 printf 'API docs:     %s/docs\n' "$BASE_URL"
 printf 'OpenAPI JSON: %s/openapi.json\n' "$BASE_URL"

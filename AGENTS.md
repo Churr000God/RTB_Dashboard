@@ -39,8 +39,9 @@ No hay otros modulos Python a nivel raiz. Si encuentras referencias a `generar_r
    ```
 3. Smoke end-to-end de endpoints:
    ```bash
-   curl -s http://localhost:8000/ | grep -q "Dashboard"
+   curl -s http://localhost:8000/ | grep -qi "dashboard"
    curl -s http://localhost:8000/api/dashboard/ventas | head -c 200
+   curl -s http://localhost:8000/api/dashboard/facturacion | head -c 200
    ```
 4. Si cambiaste UI: abrir <http://localhost:8000> con Ctrl+Shift+R, validar que la tarjeta/grafica afectada renderiza con datos actuales y los tooltips no se cortan.
 5. Si cambiaste calculos: comparar contra un CSV real conocido y reportar la diferencia esperada en el PR/commit.

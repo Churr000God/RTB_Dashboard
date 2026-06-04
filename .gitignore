@@ -7,6 +7,7 @@ __pycache__/
 # Entorno local
 .env
 .env.local
+docker-compose.override.yml
 
 # Data y outputs (contienen informacion de negocio; nunca subir)
 data/

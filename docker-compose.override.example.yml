@@ -1,0 +1,9 @@
+# Copiar como docker-compose.override.yml en el servidor de produccion.
+# Docker Compose carga ese archivo automaticamente y conserva el resto de
+# docker-compose.yml. Sustituir los placeholders por rutas absolutas reales.
+services:
+  dashboard-rtb:
+    volumes:
+      - /ruta/prod/data:/app/data
+      - /ruta/prod/data_procesada:/app/data_procesada
+      - /ruta/prod/dashboard_data:/app/dashboard_data

@@ -147,3 +147,98 @@ Si agregas una clave nueva en `kpis`, **debes regenerar la snapshot** (re-correr
 - **Ariba conversion = 100%**: pasa cuando todas las filas con flag Ariba estan en estado Aprobada. Es realista si el operador solo marca el flag al recibir la PO. Verificar en `data_procesada/` el ultimo CSV.
 - **Cotizaciones por encima del ticket promedio expiradas**: aparecen como signal de riesgo aunque sea normal en periodos cortos. Filtrar visualmente si distraen.
 - **Snapshot desfasada**: si `dashboard_data/ventas_latest.json` no se actualiza despues de disparar el formulario, el problema es timeout del wait (`RTB_CSV_WAIT_ATTEMPTS`) o un CSV nuevo aterrizando despues del cierre del request. Procesarlo manualmente con el script de `publish_ventas_snapshot`.
+
+
+## Modulo Facturacion
+
+La pestaña `Facturación` consume tres exports de n8n: `Cotizaciones_*.csv`,
+`Facturas_*.csv` y `Facturas_Secundarias_*.csv`. La fuente de verdad es
+`build_facturacion_dashboard` en `rtb_analisis.py`; la API sirve el snapshot
+independiente `dashboard_data/facturacion_latest.json`.
+
+### Columnas criticas de facturacion
+
+| Columna | Uso |
+|---|---|
+| `Factura_id` | Identificador para deduplicar principal y secundaria |
+| `Factura_cotizacion` | Relacion con `Cotizacion_id` para estimar rezago |
+| `Factura_Estado_Aprobacion` | Solo `Aprobada` puede ser factura vigente |
+| `Estado_Factura` | Desglose operativo por estado |
+| `Fecha_Facturacion` / `Fecha_Facturacion_Secundaria` | Filtro temporal y serie semanal o mensual |
+| `#_Factura` | Folio requerido para considerar vigente el registro; se extrae `Cxxxx` si hay notas embebidas |
+| `Factura_Cancelada` | **Informativo**: guarda el folio anterior sustituido. NO determina cancelacion |
+| `Monto_primer_factura` / `Monto_segunda_factura` | Si NO es nulo (ni cadena vacia) sustituye a `Total`; cero literal cuenta como valor valido |
+| `Fecha_Validacion` / `Fecha_Validacion_Secundaria` | Cobertura documental de validacion |
+| `Fecha_Asociacion` / `Fecha_Asociacion_Secundaria` | Cobertura documental de asociacion |
+
+### KPIs visibles de facturacion
+
+| Clave | Definicion |
+|---|---|
+| `facturas_vigentes` | Facturas con `Factura_Estado_Aprobacion == Aprobada`, folio, fecha, sin cancelar y sin duplicar |
+| `monto_facturado_vigente` | Suma de `round(Monto_primer/segunda_factura, 2)` si no nulo, else `round(Total, 2)`; resultado final redondeado a 2 dec |
+| `ticket_promedio_facturado` | `monto_facturado_vigente / facturas_vigentes` |
+| `facturas_principales` | Vigentes provenientes de `Facturas_*.csv` |
+| `facturas_secundarias` | Vigentes adicionales provenientes de `Facturas_Secundarias_*.csv` |
+| `facturas_canceladas` / `monto_cancelado` | Registros con `Factura_Estado_Aprobacion ∈ {Cancelada, Cancelado}` del periodo |
+| `rezago_estimado_cantidad` / `rezago_estimado_monto` | Cotizaciones aprobadas sin factura vigente asociada |
+| `cobertura_validacion_pct` | Vigentes con fecha de validacion / vigentes |
+| `cobertura_asociacion_pct` | Vigentes con fecha de asociacion / vigentes |
+
+### Signals de facturacion
+
+- `factura_captura_incompleta`: aprobada sin folio o fecha de facturacion.
+- `factura_duplicada`: mismo identificador presente mas de una vez entre exports.
+- `rezago_facturacion_estimado`: cotizacion aprobada sin factura vigente asociada.
+- `factura_folio_captura_sucia`: campo `#_Factura` contiene notas extra ademas del codigo `Cxxxx`; el folio se normaliza automaticamente pero hay que corregir en Notion.
+- `segunda_factura_pendiente`: `Monto_primer_factura` esta lleno pero no hay entrada en `Facturas_Secundarias_*.csv` — la segunda parte aun no se ha emitido. `metricas.monto_pendiente = Total − primer`.
+- `factura_partidas_desbalanceadas`: cuando ambas partes existen, `Monto_primer_factura + Monto_segunda_factura` difiere mas de $0.05 del `Total` — indica error de captura en Notion.
+
+
+## Modulo Compras
+
+La pestaña `Compras` consume un solo export de n8n: `Facturas_Compras_*.csv`.
+**No maneja pagos, CxP ni cobranza.** El modulo muestra exclusivamente el lado
+de facturacion recibida (IVA acreditable). La fuente de verdad es
+`build_compras_dashboard` en `rtb_analisis.py`; la API sirve el snapshot
+`dashboard_data/compras_latest.json`.
+
+El CSV `Facturas_Compras_Pagadas_*.csv` puede seguir llegando via n8n pero no
+se consume en este modulo.
+
+### Columnas criticas de compras
+
+| Columna | Uso |
+|---|---|
+| `Factura_compra_nombre` | Nombre/ID del proveedor |
+| `Factura_compra_subtotal` | Subtotal sin IVA ni envio |
+| `Fcatura_compra_iva` | IVA 16% (typo en export n8n, sin corregir) |
+| `Factura_compra_envio` | Costo de envio |
+| `Factura_compra_total` | Total con IVA; si es 0 se recalcula como sub+iva+env |
+| `Facatura_compra_fecha_factura` | Fecha del CFDI (typo en export n8n, sin corregir) |
+| `Factura_compra_tipo` | Tipo de pago |
+| `Factura_compra_uso_cfdi` | Clave de uso CFDI (G01, G03, etc.) |
+| `Factura_compra_estatus_factura` | Estado del CFDI: `Facturada`, `Factura Cancelada`, `Sin status` |
+
+### Regla de canceladas
+
+Las facturas con `Factura_compra_estatus_factura == "Factura Cancelada"` se
+**excluyen de todos los totales** (`n_fc`, `sub_fc`, `iva_fc`, `tot_fc`).
+Se reportan como metricas separadas `n_canc` y `tot_canc` y aparecen en el
+desglose "Estado de la factura" para visibilidad.
+
+### KPIs y series del modulo
+
+| Campo | Descripcion |
+|---|---|
+| `kpis.n_fc` | Facturas recibidas (excluye canceladas) |
+| `kpis.sub_fc` | Subtotal del periodo |
+| `kpis.iva_fc` | IVA acreditable del periodo |
+| `kpis.tot_fc` | Total c/IVA del periodo |
+| `kpis.n_canc` | Facturas canceladas |
+| `kpis.tot_canc` | Monto cancelado |
+| `series.estado_factura` | Desglose por estado del CFDI (incluye canceladas) |
+| `series.tipo_pago` | Desglose por tipo de pago (excluye canceladas) |
+| `series.uso_cfdi` | Desglose por uso de CFDI (excluye canceladas) |
+| `series.temporal` | Comportamiento temporal (excluye canceladas) |
+| `tables.top_proveedores` | Top 10 proveedores por monto (excluye canceladas) |
