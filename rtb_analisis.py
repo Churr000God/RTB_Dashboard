@@ -1128,6 +1128,279 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
         },
     }
 
+
+# ─── Cobranza (cobros de pedidos de ventas) ──────────────────────────────────
+
+_FACTURA_CLEAN_RE = re.compile(r'^C\d+$')
+_FOLIO_EXTRACT_RE = re.compile(r'(C\d+)')
+
+
+def _norm_cobro(row, tipo="principal"):
+    if tipo == "principal":
+        fecha_pago_raw = row.get("Pedido Pago Fecha de pago ", "") or row.get("Pedido Pago Fecha de pago", "")
+    else:
+        fecha_pago_raw = row.get("Pedido Pago Fecha de pago Secundaria", "")
+    factura_raw = (row.get("Pedido Pago # de Factura") or "").strip()
+    m = _FOLIO_EXTRACT_RE.search(factura_raw)
+    factura_clean = m.group(1) if m else ""
+    factura_dirty = bool(factura_raw and not _FACTURA_CLEAN_RE.fullmatch(factura_raw))
+    return {
+        "row": row, "tipo": tipo,
+        "pedido_id": (row.get("Pedido Pago ID") or "").strip(),
+        "nombre": (row.get("Pedido Pago Nombre") or "").strip(),
+        "fecha_pago": parse_date(fecha_pago_raw),
+        "fecha_asociacion": parse_date(row.get("Pedido Pago Fecha de Asociacion", "")),
+        "fecha_aprobacion": parse_date(row.get("Pedido Pago Fecha de aprobacion", "")),
+        "factura": factura_clean,
+        "factura_raw": factura_raw,
+        "factura_dirty": factura_dirty,
+        "cliente": (row.get("Pedido Pago Cliente") or "").strip(),
+        "tipo_pago": (row.get("Pedido Pago Tipo de pago") or "Sin tipo").strip() or "Sin tipo",
+        "monto": round(f(row.get("Pedido Pago Total", 0)), 2),
+        "subtotal": round(f(row.get("Pedido Pago Subtotal", 0)), 2),
+        "po": (row.get("Pedido Pago PO") or "").strip(),
+        "complemento": (row.get("Pedido Pago Complemento de pago") or "").strip(),
+    }
+
+
+def make_cobranza_signal(tipo, severidad, titulo, descripcion, periodo, metricas=None, registros=None, accion=""):
+    s = make_signal(tipo, severidad, titulo, descripcion, periodo, metricas, registros, accion)
+    s["modulo"] = "cobranza"
+    return s
+
+
+def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
+    signals = []
+
+    sin_factura = [r for r in rows if r["tipo"] == "principal" and not r["factura"]]
+    if sin_factura:
+        signals.append(make_cobranza_signal(
+            "cobro_sin_factura", "riesgo", "Cobros sin folio de factura",
+            f"{len(sin_factura)} cobro(s) con campo '# de Factura' vacío o no parseable.",
+            period_label,
+            {"cantidad": len(sin_factura), "monto": round(sum(r["monto"] for r in sin_factura), 2)},
+            [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
+              "factura_raw": r["factura_raw"], "monto": r["monto"]} for r in sin_factura[:10]],
+            "Corregir el campo '# de Factura' en Notion para estos pedidos.",
+        ))
+
+    folio_sucios = [r for r in rows if r["tipo"] == "principal" and r["factura_dirty"]]
+    if folio_sucios:
+        signals.append(make_cobranza_signal(
+            "factura_folio_sucio", "atencion", "Folios de factura con notas extra",
+            f"{len(folio_sucios)} cobro(s) tienen notas o múltiples folios en '# de Factura'. Se extrae el primero.",
+            period_label,
+            {"cantidad": len(folio_sucios)},
+            [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
+              "factura_raw": r["factura_raw"], "folio_extraido": r["factura"]} for r in folio_sucios[:10]],
+            "Capturar solo el folio en el campo '# de Factura'; mover notas a otro campo.",
+        ))
+
+    sin_cliente = [r for r in rows if r["tipo"] == "principal" and not r["cliente"]]
+    if sin_cliente:
+        signals.append(make_cobranza_signal(
+            "cobro_sin_cliente", "riesgo", "Cobros sin cliente asignado",
+            f"{len(sin_cliente)} cobro(s) sin campo 'Cliente' capturado en Notion.",
+            period_label,
+            {"cantidad": len(sin_cliente), "monto": round(sum(r["monto"] for r in sin_cliente), 2)},
+            [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "monto": r["monto"]} for r in sin_cliente[:10]],
+            "Asignar el cliente en Notion para poder hacer análisis por cliente.",
+        ))
+
+    sin_asoc = [r for r in rows if r["tipo"] == "principal" and not r["fecha_asociacion"]]
+    if sin_asoc:
+        signals.append(make_cobranza_signal(
+            "cobro_sin_fecha_asociacion", "atencion", "Cobros sin fecha de asociación a factura",
+            f"{len(sin_asoc)} cobro(s) no tienen 'Fecha de Asociacion' en Notion. No es posible calcular el lag.",
+            period_label,
+            {"cantidad": len(sin_asoc), "monto": round(sum(r["monto"] for r in sin_asoc), 2)},
+            [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
+              "monto": r["monto"]} for r in sin_asoc[:10]],
+            "Registrar la fecha en que se asoció el pago a la factura en Notion.",
+        ))
+
+    sec_sin_monto = [r for r in rows if r["tipo"] == "secundaria"]
+    if sec_sin_monto:
+        signals.append(make_cobranza_signal(
+            "monto_secundaria_no_capturado", "atencion", "Segundo cobro sin monto capturado",
+            f"{len(sec_sin_monto)} cobro(s) secundario(s). El campo 'Monto pagado Secundaria' está vacío en Notion.",
+            period_label,
+            {"cantidad": len(sec_sin_monto)},
+            [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"]} for r in sec_sin_monto[:10]],
+            "Capturar 'Monto pagado Secundaria' en Notion para reportar el monto exacto del segundo cobro.",
+        ))
+
+    if kpis.get("dias_cobro_mediana", 0) > 30:
+        signals.append(make_cobranza_signal(
+            "cobranza_lenta", "riesgo", "Cobranza con lag alto",
+            f"La mediana de días de cobranza es {kpis['dias_cobro_mediana']:.0f} días (umbral: 30).",
+            period_label,
+            {"dias_cobro_mediana": kpis["dias_cobro_mediana"],
+             "dias_cobro_promedio": kpis.get("dias_cobro_promedio", 0)},
+            [],
+            "Revisar procesos de seguimiento de cobranza con clientes.",
+        ))
+
+    return signals
+
+
+def build_cobranza_dashboard(principales, secundarias, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    pp_norm = [_norm_cobro(r, "principal") for r in (principales or [])]
+    ps_norm = [_norm_cobro(r, "secundaria") for r in (secundarias or [])]
+    pp_periodo = [r for r in pp_norm if in_period(r["fecha_pago"])]
+    ps_periodo = [r for r in ps_norm if in_period(r["fecha_pago"])]
+    all_rows = pp_periodo + ps_periodo
+
+    # ─── KPIs ─────────────────────────────────────────────────────────────────
+    cobros_principales = len(pp_periodo)
+    cobros_secundarias = len(ps_periodo)
+    cobros_total = cobros_principales + cobros_secundarias
+    monto_cobrado_total = round(sum(r["monto"] for r in pp_periodo), 2)
+    monto_secundarias_referencial = round(sum(r["monto"] for r in ps_periodo), 2)
+    ticket_promedio = round(monto_cobrado_total / cobros_principales, 2) if cobros_principales else 0.0
+
+    # ─── Días de cobranza ─────────────────────────────────────────────────────
+    lags = []
+    for r in pp_periodo:
+        d = days_diff(r["fecha_asociacion"], r["fecha_pago"])
+        if d is not None:
+            lags.append(d)
+    dias_cobro_promedio = round(avg(lags), 1) if lags else 0.0
+    dias_cobro_mediana = round(med(lags), 1) if lags else 0.0
+    dias_cobro_max = max(lags) if lags else 0
+
+    rangos_bins = [
+        ("Mismo día", 0, 1), ("1-3 d", 1, 4), ("4-7 d", 4, 8),
+        ("8-15 d", 8, 16), ("16-30 d", 16, 31), (">30 d", 31, None),
+    ]
+    rangos_counts = histog(lags, rangos_bins)
+    rangos = [
+        {"rango": rango, "n": rangos_counts[rango],
+         "pct": round(rangos_counts[rango] / len(lags), 4) if lags else 0.0}
+        for rango, _, _ in rangos_bins
+    ]
+
+    # ─── Calidad de captura ────────────────────────────────────────────────────
+    cobros_sin_factura = sum(1 for r in pp_periodo if not r["factura"])
+    cobros_sin_cliente = sum(1 for r in pp_periodo if not r["cliente"])
+    cobros_sin_fecha_asociacion = sum(1 for r in pp_periodo if not r["fecha_asociacion"])
+
+    # ─── Señales ───────────────────────────────────────────────────────────────
+    kpis_pre = {"dias_cobro_mediana": dias_cobro_mediana, "dias_cobro_promedio": dias_cobro_promedio}
+    signals = build_cobranza_signals(all_rows, kpis_pre, period_label)
+
+    # ─── Tipos de pago ────────────────────────────────────────────────────────
+    tipo_pago_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in pp_periodo:
+        tp = r["tipo_pago"] if r["tipo_pago"] != "Sin tipo" else "Sin tipo"
+        tipo_pago_data[tp]["n"] += 1
+        tipo_pago_data[tp]["m"] += r["monto"]
+
+    # ─── Top clientes ─────────────────────────────────────────────────────────
+    cli_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in pp_periodo:
+        c = r["cliente"] or "(sin cliente)"
+        cli_data[c]["n"] += 1
+        cli_data[c]["m"] += r["monto"]
+    top_clientes = [
+        {"cliente": c, "n": v["n"], "m": round(v["m"], 2)}
+        for c, v in sorted(cli_data.items(), key=lambda x: -x[1]["m"])[:10]
+    ]
+
+    # ─── Serie temporal ───────────────────────────────────────────────────────
+    def _fp(row):
+        return row["fecha_pago"].isoformat() if row["fecha_pago"] else ""
+
+    temporal = aggregate_temporal(
+        all_rows,
+        date_getter=_fp,
+        metric_getters={
+            "cobros":      lambda row: 1 if row["tipo"] == "principal" else 0,
+            "monto":       lambda row: row["monto"] if row["tipo"] == "principal" else 0.0,
+            "secundarias": lambda row: 1 if row["tipo"] == "secundaria" else 0,
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "cobros": linear_trend([p["cobros"] for p in periods]),
+        "monto":  linear_trend([p["monto"]  for p in periods]),
+    }
+
+    # ─── Tabla cobros ─────────────────────────────────────────────────────────
+    def _iso(dt):
+        return dt.date().isoformat() if dt else ""
+
+    tabla_cobros = sorted(
+        [
+            {
+                "pedido_id": r["pedido_id"],
+                "nombre": r["nombre"],
+                "tipo": r["tipo"],
+                "cliente": r["cliente"],
+                "factura": r["factura"],
+                "factura_raw": r["factura_raw"] if r["factura_dirty"] else "",
+                "tipo_pago": r["tipo_pago"],
+                "monto": r["monto"] if r["tipo"] == "principal" else None,
+                "po": r["po"],
+                "complemento": r["complemento"],
+                "fecha_pago": _iso(r["fecha_pago"]),
+                "fecha_asociacion": _iso(r["fecha_asociacion"]),
+                "dias_cobro": days_diff(r["fecha_asociacion"], r["fecha_pago"]),
+            }
+            for r in all_rows
+        ],
+        key=lambda x: (x["fecha_pago"] or ""), reverse=True,
+    )
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "cobros_total": cobros_total,
+            "cobros_principales": cobros_principales,
+            "cobros_secundarias": cobros_secundarias,
+            "monto_cobrado_total": monto_cobrado_total,
+            "monto_secundarias_referencial": monto_secundarias_referencial,
+            "ticket_promedio": ticket_promedio,
+            "dias_cobro_promedio": dias_cobro_promedio,
+            "dias_cobro_mediana": dias_cobro_mediana,
+            "dias_cobro_max": dias_cobro_max,
+            "n_con_lag": len(lags),
+            "cobros_sin_factura": cobros_sin_factura,
+            "cobros_sin_cliente": cobros_sin_cliente,
+            "cobros_sin_fecha_asociacion": cobros_sin_fecha_asociacion,
+            "senales": len(signals),
+        },
+        "series": {
+            "temporal": temporal,
+            "tipo_pago": [{"tipo": k, **v} for k, v in sorted(tipo_pago_data.items(), key=lambda x: -x[1]["m"])],
+            "dias_cobro": {
+                "stats": {
+                    "avg": dias_cobro_promedio, "med": dias_cobro_mediana,
+                    "max": dias_cobro_max, "n": len(lags),
+                },
+                "rangos": rangos,
+            },
+        },
+        "tables": {
+            "top_clientes": top_clientes,
+            "cobros": tabla_cobros,
+        },
+        "signals": signals,
+    }
+
+
 # ─── Lectura ────────────────────────────────────────────────────────────────
 def load_all(data_dir="data", allowed_files=None):
     prefixes = {

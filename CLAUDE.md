@@ -36,6 +36,7 @@ El override monta el código local (`.:/app`) — cambios en `.py` se reflejan s
 | `contexto/RTB_REPORTE_ACTUAL.md` | Reglas de negocio (mantener actualizada) |
 | `tests/test_facturacion_dashboard.py` | Suite facturación |
 | `tests/test_compras_dashboard.py` | Suite compras (22 tests) |
+| `tests/test_cobranza_dashboard.py` | Suite cobranza (29 tests) |
 
 ---
 
@@ -75,6 +76,13 @@ GET /api/dashboard/*  →  sirve el JSON
 - Función: `build_compras_dashboard(fc, anticipos=...)`
 - Snapshot: `dashboard_data/compras_latest.json`
 
+### Cobranza (cobros de pedidos de ventas)
+- `Pagos_Principlaes_Facturas_Ventas_YYYY-MM-DD_HH-MM.csv` — **nótese el typo "Principlaes"**, viene así de n8n. Regex allowlist: `^Pagos_Principlaes_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Pagos_Secundarias_Facturas_Ventas_YYYY-MM-DD_HH-MM.csv` — regex: `^Pagos_Secundarias_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- Selección: `find_latest_cobranza_csvs()` en `rtb_web.py`
+- Función: `build_cobranza_dashboard(principales, secundarias, ...)`
+- Snapshot: `dashboard_data/cobranza_latest.json`
+
 ---
 
 ## Reglas de negocio críticas
@@ -106,6 +114,20 @@ Un anticipo es **Regularizado** (vinculado) cuando existe una factura de compras
 - Rojo = `monto_pendiente` (sin factura definitiva)
 - Azul = `monto_regularizado` (vinculado a factura definitiva)
 - Ambas barras usan la fecha del anticipo, NO la fecha de la factura definitiva.
+
+### Cobranza — monto cobrado
+- `Pedido Pago Total` (c/IVA) es el monto cobrado. El campo `Pedido Pago Monto pagado` viene vacío en todos los registros actuales — ignorarlo.
+- `Pedido Estatus de pago` siempre llega como `"Pagada Total"`. El CSV contiene solo cobros completados.
+- **Eje temporal: `Fecha de pago`** (siempre poblada), no la fecha de asociación.
+
+### Cobranza — secundarias NO suman al ingreso
+Un cobro "secundaria" es el **segundo cobro del mismo pedido** facturado en dos partes. Su `Total` es el total del pedido completo, **no** el monto del segundo cobro. Por ello:
+- `monto_cobrado_total` = suma de `Total` de **principales únicamente**.
+- `monto_secundarias_referencial` = suma de `Total` de secundarias (referencia, no ingreso).
+- El monto real del 2º cobro no está capturado en Notion (`Monto pagado Secundaria` está vacío) — se reporta señal `monto_secundaria_no_capturado`.
+
+### Cobranza — días de cobranza
+`days_diff(fecha_asociacion, fecha_pago)` — lag entre cuándo se asoció la factura y cuándo se recibió el pago. Solo calculable cuando `Fecha de Asociacion` está poblada (≈79 % de los registros actuales).
 
 ---
 
@@ -179,3 +201,4 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-04 | Columna Estado de anticipos: solo badge, sin texto "Procesada" del CSV. |
 | 2026-06-04 | `find_latest_facturacion_csv` migrada de denylist a allowlist regex `^<prefix>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`. Movida a `rtb_analisis.py` para ser testeable sin FastAPI. 4 tests de regresión agregados a `test_facturacion_dashboard.py`. |
 | 2026-06-04 | Compras: nueva tarjeta KPI "Total del periodo" — `n_fc + n_ant_pendientes` y `tot_fc + monto_pendientes`. Calculada en JS puro en `renderCompras()`, sin cambio de backend ni snapshot. |
+| 2026-06-04 | Nuevo módulo Cobranza (4º tab). Monto cobrado = `Total` de principales únicamente. Secundarias = 2º cobro del mismo pedido; su `Total` NO se suma al ingreso. Días de cobranza = `days_diff(fecha_asociacion, fecha_pago)`. CSV prefix tiene typo "Principlaes" de n8n — respetado en código. |

@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from rtb_analisis import build_compras_dashboard, build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, find_latest_facturacion_csv, load_cotizaciones, read_csv
+from rtb_analisis import build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, find_latest_facturacion_csv, load_cotizaciones, read_csv
 
 
 WEBHOOK_URLS = {
@@ -30,6 +30,7 @@ HTTP_TIMEOUT_SECONDS = 900
 SALES_SNAPSHOT_FILENAME = "ventas_latest.json"
 FACTURACION_SNAPSHOT_FILENAME = "facturacion_latest.json"
 COMPRAS_SNAPSHOT_FILENAME = "compras_latest.json"
+COBRANZA_SNAPSHOT_FILENAME = "cobranza_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
@@ -416,6 +417,69 @@ def load_compras_payload(data_dir: str = "data", dashboard_dir: str = "dashboard
     return build_compras_dashboard(read_csv(fc_path), anticipos=ant_rows)
 
 
+import re as _re
+
+_COBRANZA_PRINCIPALES_PATTERN = _re.compile(
+    r"^Pagos_Principlaes_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$"
+)
+_COBRANZA_SECUNDARIAS_PATTERN = _re.compile(
+    r"^Pagos_Secundarias_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$"
+)
+
+
+def find_latest_cobranza_csvs(data_dir: str | Path) -> tuple[Path, Path | None]:
+    root = Path(data_dir)
+    pp_matches = [p for p in root.glob("Pagos_Principlaes_Facturas_Ventas_*.csv")
+                  if p.is_file() and _COBRANZA_PRINCIPALES_PATTERN.match(p.name)]
+    if not pp_matches:
+        raise FileNotFoundError(
+            f"No se encontro Pagos_Principlaes_Facturas_Ventas_*.csv en {root.resolve()}"
+        )
+    pp_path = max(pp_matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
+    ps_matches = [p for p in root.glob("Pagos_Secundarias_Facturas_Ventas_*.csv")
+                  if p.is_file() and _COBRANZA_SECUNDARIAS_PATTERN.match(p.name)]
+    ps_path = max(ps_matches, key=lambda p: (p.stat().st_mtime_ns, p.name)) if ps_matches else None
+    return pp_path, ps_path
+
+
+def publish_cobranza_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    pp_path, ps_path = find_latest_cobranza_csvs(data_dir)
+    ps_rows = read_csv(ps_path) if ps_path else []
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    cobranza = build_cobranza_dashboard(
+        read_csv(pp_path),
+        ps_rows,
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    files = {"principales": pp_path.name}
+    if ps_path:
+        files["secundarias"] = ps_path.name
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": files,
+        "dashboard": {"cobranza": cobranza},
+    }
+    atomic_write_json(Path(dashboard_dir) / COBRANZA_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_cobranza_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / COBRANZA_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["cobranza"]
+    pp_path, ps_path = find_latest_cobranza_csvs(data_dir)
+    ps_rows = read_csv(ps_path) if ps_path else []
+    return build_cobranza_dashboard(read_csv(pp_path), ps_rows)
+
+
 def render_index() -> str:
     today = datetime.now()
     _end = today.strftime("%Y-%m-%d")
@@ -686,6 +750,7 @@ def render_index() -> str:
         <button class="module-tab" type="button" data-module="facturacion">Facturación</button>
         <button class="module-tab" type="button" data-module="operacion">Operacion</button>
         <button class="module-tab" type="button" data-module="compras">Compras</button>
+        <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
         <button class="module-tab" type="button" data-module="inventario">Inventario</button>
         <button class="module-tab" type="button" data-module="finanzas">Finanzas</button>
         <button class="module-tab" type="button" data-module="pnl">P&amp;L</button>
@@ -1050,6 +1115,87 @@ def render_index() -> str:
             </div>
           </section>
         </section>
+
+        <section id="cobranzaPanel" class="cobranza-panel" aria-label="Cobros de pedidos de ventas" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="cobranzaKpiGrid">
+            <p class="panel-state">Cargando cobranza...</p>
+          </div>
+
+          <section class="status-section" id="cobranzaTemporalSection" hidden>
+            <h2 class="section-title" id="cobranzaTemporalTitle">Comportamiento temporal</h2>
+            <p class="section-subtitle" id="cobranzaTemporalSubtitle"></p>
+            <div class="section-body">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th id="cobranzaTemporalHeading">Per.</th><th>Cobros</th><th>Monto cobrado</th><th>2º cobros</th></tr></thead>
+                  <tbody id="cobranzaTemporalRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="cobranzaTemporalVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="cobranzaTemporalVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="cobranzaTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de cobranza"></canvas>
+                  <div class="chart-tooltip" id="cobranzaTemporalTooltip" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="cobranzaTipoPagoSection" hidden>
+            <h2 class="section-title">Tipo de pago</h2>
+            <p class="section-subtitle">Distribución de cobros por forma de pago del cliente.</p>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Tipo</th><th>Cobros</th><th>Monto</th><th>%</th></tr></thead>
+                  <tbody id="cobranzaTipoPagoRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="cobranzaTipoPagoPie" width="520" height="520" aria-label="Tipo de pago cobranza" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="cobranzaTipoPagoPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="pie-tooltip" id="cobranzaTipoPagoTooltip" hidden></div>
+                <div class="pie-legend" id="cobranzaTipoPagoLegend"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="cobranzaDiasSection" hidden>
+            <h2 class="section-title">Días de cobranza</h2>
+            <p class="section-subtitle">Lag entre la fecha de asociación a factura y la fecha de pago recibido.</p>
+            <div id="cobranzaDiasKpis" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Rango</th><th>Cobros</th><th>%</th></tr></thead>
+                <tbody id="cobranzaDiasRangosRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="status-section" id="cobranzaTopClientesSection" hidden>
+            <h2 class="section-title">Top 10 clientes</h2>
+            <p class="section-subtitle">Ranking por monto cobrado del periodo (solo cobros principales).</p>
+            <div class="hbar-chart" id="cobranzaTopClientesChart"></div>
+            <div class="chart-tooltip" id="cobranzaTopClientesTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="cobranzaSinFacturaSection" hidden>
+            <h2 class="section-title">Cobros sin factura asociada</h2>
+            <p class="section-subtitle">Cobros cuyo campo 'Fecha de Asociacion' está vacío en Notion. Pendiente de vincular.</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Nombre del pedido</th><th>Cliente</th><th># Factura</th><th>Tipo pago</th><th>Monto</th><th>Fecha pago</th></tr></thead>
+                <tbody id="cobranzaSinFacturaRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
       </div>
     </section>
   </main>
@@ -1127,6 +1273,31 @@ def render_index() -> str:
     const comprasCfdiPieCenter = document.querySelector('#comprasCfdiPieCenter');
     const comprasCfdiTooltip = document.querySelector('#comprasCfdiTooltip');
     const comprasCfdiLegend = document.querySelector('#comprasCfdiLegend');
+    const cobranzaPanel = document.querySelector('#cobranzaPanel');
+    const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
+    const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
+    const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
+    const cobranzaTemporalSubtitle = document.querySelector('#cobranzaTemporalSubtitle');
+    const cobranzaTemporalHeading = document.querySelector('#cobranzaTemporalHeading');
+    const cobranzaTemporalRows = document.querySelector('#cobranzaTemporalRows');
+    const cobranzaTemporalChart = document.querySelector('#cobranzaTemporalChart');
+    const cobranzaTemporalTooltip = document.querySelector('#cobranzaTemporalTooltip');
+    const cobranzaTemporalVistaMonto = document.querySelector('#cobranzaTemporalVistaMonto');
+    const cobranzaTemporalVistaCantidad = document.querySelector('#cobranzaTemporalVistaCantidad');
+    const cobranzaTipoPagoSection = document.querySelector('#cobranzaTipoPagoSection');
+    const cobranzaTipoPagoRows = document.querySelector('#cobranzaTipoPagoRows');
+    const cobranzaTipoPagoPie = document.querySelector('#cobranzaTipoPagoPie');
+    const cobranzaTipoPagoPieCenter = document.querySelector('#cobranzaTipoPagoPieCenter');
+    const cobranzaTipoPagoTooltip = document.querySelector('#cobranzaTipoPagoTooltip');
+    const cobranzaTipoPagoLegend = document.querySelector('#cobranzaTipoPagoLegend');
+    const cobranzaDiasSection = document.querySelector('#cobranzaDiasSection');
+    const cobranzaDiasKpis = document.querySelector('#cobranzaDiasKpis');
+    const cobranzaDiasRangosRows = document.querySelector('#cobranzaDiasRangosRows');
+    const cobranzaTopClientesSection = document.querySelector('#cobranzaTopClientesSection');
+    const cobranzaTopClientesChart = document.querySelector('#cobranzaTopClientesChart');
+    const cobranzaTopClientesTooltip = document.querySelector('#cobranzaTopClientesTooltip');
+    const cobranzaSinFacturaSection = document.querySelector('#cobranzaSinFacturaSection');
+    const cobranzaSinFacturaRows = document.querySelector('#cobranzaSinFacturaRows');
     const kpiGrid = document.querySelector('#kpiGrid');
     const estadoSection = document.querySelector('#estadoSection');
     const estadoRows = document.querySelector('#estadoRows');
@@ -1172,6 +1343,7 @@ def render_index() -> str:
     let ventasLoaded = false;
     let facturacionLoaded = false;
     let comprasLoaded = false;
+    let cobranzaLoaded = false;
     let estadoChart = { slices: [], activeIndex: null };
     let facturacionEstadoChart = { slices: [], activeIndex: null };
     let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
@@ -1179,6 +1351,8 @@ def render_index() -> str:
     let comprasCfdiChart = { slices: [], activeIndex: null };
     let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let comprasAnticiposState = { rows: [], periodos: [], activeIndex: null, points: [] };
+    let cobranzaTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let cobranzaTipoPagoChart = { slices: [], activeIndex: null };
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -2711,7 +2885,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -3709,6 +3883,376 @@ def render_index() -> str:
       }
     }
 
+    // ─── Cobranza ─────────────────────────────────────────────────────────────
+
+    const COBRANZA_TIPO_PAGO_COLORS = ['#276f86','#159895','#e07b39','#9b59b6','#d0b56b','#d96058','#2ecc71','#3498db','#e74c3c','#95a5a6'];
+
+    function renderCobranzaTipoPagoPie(activeIndex = null) {
+      const ctx = cobranzaTipoPagoPie.getContext('2d');
+      const rect = cobranzaTipoPagoPie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      cobranzaTipoPagoPie.width = Math.max(1, Math.round(rect.width * dpr));
+      cobranzaTipoPagoPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      cobranzaTipoPagoChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd'; ctx.fill();
+      ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function cobranzaTipoPagoSliceAtEvent(event) {
+      const rect = cobranzaTipoPagoPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return cobranzaTipoPagoChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveCobranzaTipoPago(index, event) {
+      cobranzaTipoPagoChart.activeIndex = index >= 0 ? index : null;
+      renderCobranzaTipoPagoPie(cobranzaTipoPagoChart.activeIndex);
+      cobranzaTipoPagoLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === cobranzaTipoPagoChart.activeIndex));
+      cobranzaTipoPagoRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === cobranzaTipoPagoChart.activeIndex));
+      if (cobranzaTipoPagoChart.activeIndex === null) {
+        cobranzaTipoPagoTooltip.hidden = true;
+        cobranzaTipoPagoPieCenter.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = cobranzaTipoPagoChart.slices[cobranzaTipoPagoChart.activeIndex];
+      cobranzaTipoPagoPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.tipo)}</span>`;
+      if (event) placeTooltipNear(cobranzaTipoPagoTooltip, event.clientX, event.clientY);
+      cobranzaTipoPagoTooltip.innerHTML = `
+        <b>${escapeHtml(slice.tipo)}</b>
+        <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+        <div><span>Cobros</span><strong>${formatNumber(slice.qty)}</strong></div>
+        <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+      `;
+      cobranzaTipoPagoTooltip.hidden = false;
+    }
+
+    function renderCobranzaTipoPago(tipoPago) {
+      const rows = [...(tipoPago || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
+      if (!rows.length || !totalMonto) { cobranzaTipoPagoSection.hidden = true; return; }
+      cobranzaTipoPagoRows.innerHTML = rows.map((row, index) => {
+        const color = COBRANZA_TIPO_PAGO_COLORS[index % COBRANZA_TIPO_PAGO_COLORS.length];
+        const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.tipo)}</span></td>
+          <td>${formatNumber(row.n)}</td>
+          <td>${formatMoney(row.m)}</td>
+          <td>${formatPercent(montoPct)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="4">Sin datos.</td></tr>';
+      let current = -Math.PI / 2;
+      cobranzaTipoPagoChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const color = COBRANZA_TIPO_PAGO_COLORS[index % COBRANZA_TIPO_PAGO_COLORS.length];
+        const slice = {
+          tipo: row.tipo, qty: Number(row.n || 0), monto: value,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color, start: current, end: current + span,
+        };
+        current += span;
+        return slice;
+      });
+      cobranzaTipoPagoLegend.innerHTML = cobranzaTipoPagoChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.tipo)}</span>
+          <strong>${formatPercent(slice.montoPct)}</strong>
+        </button>
+      `).join('');
+      cobranzaTipoPagoSection.hidden = false;
+      setActiveCobranzaTipoPago(null);
+      cobranzaTipoPagoPie.addEventListener('mousemove', (event) => {
+        const index = cobranzaTipoPagoSliceAtEvent(event);
+        if (index !== null && index >= 0) setActiveCobranzaTipoPago(index, event);
+        else setActiveCobranzaTipoPago(null);
+      });
+      cobranzaTipoPagoPie.addEventListener('mouseleave', () => setActiveCobranzaTipoPago(null));
+      cobranzaTipoPagoLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (item) setActiveCobranzaTipoPago(Number(item.dataset.index), event);
+      });
+      cobranzaTipoPagoLegend.addEventListener('mouseleave', () => setActiveCobranzaTipoPago(null));
+      cobranzaTipoPagoRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (row) setActiveCobranzaTipoPago(Number(row.dataset.index), event);
+      });
+      cobranzaTipoPagoRows.addEventListener('mouseleave', () => setActiveCobranzaTipoPago(null));
+    }
+
+    function drawCobranzaTemporalChart(activeIndex = null) {
+      const ctx = cobranzaTemporalChart.getContext('2d');
+      const rect = resizeCanvasToDisplay(cobranzaTemporalChart, ctx);
+      const width = rect.width, height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      const rows = cobranzaTemporalState.rows;
+      if (!rows.length) { cobranzaTemporalState.points = []; return; }
+      const vista = cobranzaTemporalState.vista;
+      const values = rows.map((r) => Number(vista === 'monto' ? r.monto : r.cobros) || 0);
+      const maxVal = Math.max(...values, 1);
+      const maxY = maxVal * 1.18;
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const slot = plotW / rows.length;
+      const barW = Math.min(56, slot * 0.6);
+      cobranzaTemporalState.points = [];
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        const labelVal = maxY * (1 - i / 4);
+        ctx.fillText(vista === 'monto' ? formatMoney(labelVal).replace('MXN', '').trim() : formatNumber(labelVal), pad.left - 8, y);
+      }
+      rows.forEach((row, index) => {
+        const val = Number(vista === 'monto' ? row.monto : row.cobros) || 0;
+        const barH = (val / maxY) * plotH;
+        const x = pad.left + slot * index + (slot - barW) / 2;
+        const y = pad.top + plotH - barH;
+        const isActive = activeIndex === index;
+        ctx.fillStyle = isActive ? '#1d5368' : '#159895';
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.5;
+        drawRoundRect(ctx, x, y, barW, barH, 5);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isActive ? '#1d5368' : '#65717e';
+        ctx.font = `${isActive ? 700 : 500} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, pad.left + slot * index + slot / 2, pad.top + plotH + 14);
+        cobranzaTemporalState.points.push({ x: pad.left + slot * index + slot / 2, slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), row, index });
+      });
+    }
+
+    function setActiveCobranzaTemporal(index, event) {
+      cobranzaTemporalState.activeIndex = index >= 0 ? index : null;
+      drawCobranzaTemporalChart(cobranzaTemporalState.activeIndex);
+      cobranzaTemporalRows.querySelectorAll('tr').forEach((tr, i) => tr.classList.toggle('active', i === cobranzaTemporalState.activeIndex));
+      if (cobranzaTemporalState.activeIndex === null) { cobranzaTemporalTooltip.hidden = true; return; }
+      const row = cobranzaTemporalState.rows[cobranzaTemporalState.activeIndex];
+      if (!row) return;
+      if (event) placeTooltipNear(cobranzaTemporalTooltip, event.clientX, event.clientY);
+      cobranzaTemporalTooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Cobros</span><strong>${formatNumber(row.cobros)}</strong></div>
+        <div><span>Monto cobrado</span><strong>${formatMoney(row.monto)}</strong></div>
+        <div><span>2º cobros</span><strong>${formatNumber(row.secundarias)}</strong></div>
+      `;
+      cobranzaTemporalTooltip.hidden = false;
+    }
+
+    function renderCobranzaTemporal(temporal) {
+      if (!temporal) return;
+      const granularidad = temporal.granularidad || 'semana';
+      const mensual = granularidad === 'mes';
+      cobranzaTemporalTitle.textContent = mensual ? 'Comportamiento mensual' : 'Comportamiento semanal';
+      cobranzaTemporalSubtitle.textContent = mensual ? 'Agrupado por mes calendario del periodo seleccionado' : 'S1=1-7 · S2=8-14 · S3=15-21 · S4=22-28 · S5=29-fin de mes';
+      cobranzaTemporalHeading.textContent = mensual ? 'Mes' : 'Sem.';
+      const periodos = temporal.periodos || [];
+      const rows = periodos.map((p) => ({
+        etiqueta: p.etiqueta || '',
+        cobros: Number(p.cobros || 0),
+        monto: Number(p.monto || 0),
+        secundarias: Number(p.secundarias || 0),
+      }));
+      if (!rows.length) { cobranzaTemporalSection.hidden = true; return; }
+      cobranzaTemporalState.rows = rows;
+      cobranzaTemporalState.tendencias = temporal.tendencias || null;
+      cobranzaTemporalRows.innerHTML = rows.map((row, index) => `
+        <tr data-index="${index}">
+          <td><strong>${escapeHtml(row.etiqueta)}</strong></td>
+          <td>${formatNumber(row.cobros)}</td>
+          <td>${formatMoney(row.monto)}</td>
+          <td>${formatNumber(row.secundarias)}</td>
+        </tr>
+      `).join('');
+      cobranzaTemporalSection.hidden = false;
+      setActiveCobranzaTemporal(null);
+      cobranzaTemporalVistaMonto.addEventListener('click', () => {
+        cobranzaTemporalState.vista = 'monto';
+        cobranzaTemporalVistaMonto.classList.add('active');
+        cobranzaTemporalVistaCantidad.classList.remove('active');
+        drawCobranzaTemporalChart(null);
+      });
+      cobranzaTemporalVistaCantidad.addEventListener('click', () => {
+        cobranzaTemporalState.vista = 'cantidad';
+        cobranzaTemporalVistaCantidad.classList.add('active');
+        cobranzaTemporalVistaMonto.classList.remove('active');
+        drawCobranzaTemporalChart(null);
+      });
+    }
+
+    cobranzaTemporalChart.addEventListener('mousemove', (event) => {
+      const rect = cobranzaTemporalChart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const idx = cobranzaTemporalState.points.findIndex((p) => x >= p.slotLeft && x < p.slotRight);
+      if (idx >= 0) setActiveCobranzaTemporal(idx, event);
+      else setActiveCobranzaTemporal(null);
+    });
+    cobranzaTemporalChart.addEventListener('mouseleave', () => setActiveCobranzaTemporal(null));
+    cobranzaTemporalRows.addEventListener('mousemove', (event) => {
+      const row = event.target.closest('tr');
+      if (!row) return;
+      setActiveCobranzaTemporal(Number(row.dataset.index), event);
+    });
+    cobranzaTemporalRows.addEventListener('mouseleave', () => setActiveCobranzaTemporal(null));
+
+    function renderCobranzaDias(diasCobro) {
+      const stats = diasCobro?.stats || {};
+      const rangos = diasCobro?.rangos || [];
+      const n = Number(stats.n || 0);
+      if (!n) { cobranzaDiasSection.hidden = true; return; }
+      cobranzaDiasKpis.innerHTML = `
+        <div class="kpi-inline">${metric('Promedio', formatNumber(stats.avg) + ' días', 'Días promedio de cobranza')}</div>
+        <div class="kpi-inline">${metric('Mediana', formatNumber(stats.med) + ' días', 'La mitad cobra en menos de este tiempo')}</div>
+        <div class="kpi-inline">${metric('Máximo', formatNumber(stats.max) + ' días', 'Cobro con mayor lag')}</div>
+        <div class="kpi-inline">${metric('Con dato', formatNumber(n), 'Cobros con fecha de asociación')}</div>
+      `;
+      cobranzaDiasRangosRows.innerHTML = rangos.map((r) => `
+        <tr>
+          <td><strong>${escapeHtml(r.rango)}</strong></td>
+          <td>${formatNumber(r.n)}</td>
+          <td>${formatPercent(r.pct)}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+      cobranzaDiasSection.hidden = false;
+    }
+
+    function renderCobranzaTopClientes(topClientes) {
+      if (!topClientes || !topClientes.length) { cobranzaTopClientesSection.hidden = true; return; }
+      renderTopChart(cobranzaTopClientesChart, cobranzaTopClientesTooltip, topClientes, {
+        barField: 'm',
+        labelField: 'cliente',
+        color: '#d0b56b',
+        tooltipFn: (d) => `
+          <b>${escapeHtml(d.cliente || '—')}</b>
+          <div><span>Cobros</span><strong>${formatNumber(d.n)}</strong></div>
+          <div><span>Monto cobrado</span><strong>${formatMoney(d.m)}</strong></div>
+        `,
+      });
+      cobranzaTopClientesSection.hidden = false;
+    }
+
+    function renderCobranzaSinFactura(cobros) {
+      const sinFact = (cobros || []).filter((r) => !r.fecha_asociacion && r.tipo === 'principal');
+      if (!sinFact.length) { cobranzaSinFacturaSection.hidden = true; return; }
+      cobranzaSinFacturaRows.innerHTML = sinFact.map((r) => `
+        <tr>
+          <td>${escapeHtml(r.nombre || '')}</td>
+          <td>${escapeHtml(r.cliente || '—')}</td>
+          <td>${escapeHtml(r.factura || r.factura_raw || '—')}</td>
+          <td>${escapeHtml(r.tipo_pago || '')}</td>
+          <td>${r.monto != null ? formatMoney(r.monto) : '—'}</td>
+          <td>${escapeHtml(r.fecha_pago || '')}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="6">Sin datos.</td></tr>';
+      cobranzaSinFacturaSection.hidden = false;
+    }
+
+    function renderCobranza(body) {
+      const kpis = body.kpis || {};
+      const nSec = Number(kpis.cobros_secundarias || 0);
+      const nCalidad = Number(kpis.cobros_sin_factura || 0) + Number(kpis.cobros_sin_cliente || 0) + Number(kpis.cobros_sin_fecha_asociacion || 0);
+      const calClass = nCalidad > 0 ? 'warning' : '';
+      const diasMediana = Number(kpis.dias_cobro_mediana || 0);
+      const diasClass = diasMediana > 30 ? 'warning' : 'accent';
+      const cards = [
+        `<article class="kpi-card primary">
+          <h2>Cobranza del periodo</h2>
+          <div class="kpi-pair">
+            ${metric('Cobros principales', kpiValue(kpis, 'cobros_principales', 'number'), 'Primer cobro del pedido')}
+            ${metric('Monto cobrado', kpiValue(kpis, 'monto_cobrado_total', 'money'), 'Suma Total c/IVA')}
+          </div>
+          ${metric('Ticket promedio', kpiValue(kpis, 'ticket_promedio', 'money'), 'Monto / cobros principales')}
+        </article>`,
+        `<article class="kpi-card">
+          <h2>Total del periodo</h2>
+          <div class="kpi-pair">
+            ${metric('Total eventos', kpiValue(kpis, 'cobros_total', 'number'), 'Principales + 2º cobros')}
+            ${metric('Monto cobrado', kpiValue(kpis, 'monto_cobrado_total', 'money'), 'Solo cobros principales')}
+          </div>
+          <div class="kpi-pair">
+            ${metric('Principales', kpiValue(kpis, 'cobros_principales', 'number'), 'Primer cobro')}
+            ${metric('Segundos cobros', kpiValue(kpis, 'cobros_secundarias', 'number'), 'Cobro adicional del pedido')}
+          </div>
+        </article>`,
+        `<article class="kpi-card ${diasClass}">
+          <h2>Días de cobranza</h2>
+          <div class="kpi-pair">
+            ${metric('Promedio', kpiValue(kpis, 'dias_cobro_promedio', 'number') + ' días', 'Lag asociación → pago')}
+            ${metric('Mediana', kpiValue(kpis, 'dias_cobro_mediana', 'number') + ' días', 'La mitad cobra en menos')}
+          </div>
+          ${metric('Con fecha de asociación', kpiValue(kpis, 'n_con_lag', 'number'), 'Cobros con dato calculable')}
+        </article>`,
+        `<article class="kpi-card ${calClass}">
+          <h2>Calidad de captura</h2>
+          <div class="kpi-pair">
+            ${metric('Sin folio factura', kpiValue(kpis, 'cobros_sin_factura', 'number'), 'Campo # Factura vacío/sucio')}
+            ${metric('Sin cliente', kpiValue(kpis, 'cobros_sin_cliente', 'number'), 'Campo Cliente vacío')}
+          </div>
+          ${metric('Sin fecha asociación', kpiValue(kpis, 'cobros_sin_fecha_asociacion', 'number'), 'Sin Fecha de Asociacion en Notion')}
+        </article>`,
+      ];
+      if (nSec > 0) {
+        cards.push(`<article class="kpi-card accent">
+          <h2>Segundos cobros</h2>
+          <div class="kpi-pair">
+            ${metric('Pedidos con 2º cobro', kpiValue(kpis, 'cobros_secundarias', 'number'), 'Cobros adicionales del periodo')}
+            ${metric('Monto referencial', kpiValue(kpis, 'monto_secundarias_referencial', 'money'), 'Total del pedido (no suma al ingreso)')}
+          </div>
+          <p class="kpi-note">Monto exacto del 2º cobro no capturado en Notion</p>
+        </article>`);
+      }
+      cobranzaKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
+      renderCobranzaTemporal(body.series?.temporal);
+      renderCobranzaTipoPago(body.series?.tipo_pago || []);
+      renderCobranzaDias(body.series?.dias_cobro);
+      renderCobranzaTopClientes(body.tables?.top_clientes || []);
+      renderCobranzaSinFactura(body.tables?.cobros || []);
+    }
+
+    async function loadCobranza() {
+      if (cobranzaLoaded) return;
+      try {
+        const response = await fetch('/api/dashboard/cobranza');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de cobranza.');
+        renderCobranza(body);
+        cobranzaLoaded = true;
+      } catch (error) {
+        cobranzaKpiGrid.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     async function loadVentasKpis() {
       if (ventasLoaded) return;
       try {
@@ -3736,9 +4280,11 @@ def render_index() -> str:
       ventasPanel.hidden = moduleName !== 'ventas';
       facturacionPanel.hidden = moduleName !== 'facturacion';
       comprasPanel.hidden = moduleName !== 'compras';
+      cobranzaPanel.hidden = moduleName !== 'cobranza';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
       if (moduleName === 'compras') loadCompras();
+      if (moduleName === 'cobranza') loadCobranza();
     }
 
     form.addEventListener('input', refreshPayload);
@@ -3877,6 +4423,15 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/cobranza")
+    def dashboard_cobranza(request: Request) -> dict:
+        try:
+            return load_cobranza_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/actualizar-datos", status_code=status.HTTP_202_ACCEPTED)
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
         try:
@@ -3910,6 +4465,15 @@ def create_app(
                 pass
             try:
                 publish_compras_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_cobranza_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     payload.fecha_desde,
@@ -3962,6 +4526,15 @@ def create_app(
                 pass
             try:
                 publish_compras_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_cobranza_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     fecha_desde,
