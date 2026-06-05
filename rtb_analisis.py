@@ -97,7 +97,21 @@ def find_latest_facturacion_csv(data_dir, prefix):
     return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
 
 def load_cotizaciones(data_dir="data"):
-    return read_csv(find_latest_csv(data_dir, "Cotizaciones"))
+    try:
+        return read_csv(find_latest_csv(data_dir, "Cotizaciones"))
+    except FileNotFoundError:
+        # Fallback: buscar en data_procesada/ cuando data/ está vacío (post-archivo de n8n)
+        archive = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "data_procesada")
+        if os.path.isdir(archive):
+            matches = []
+            for root, _dirs, files in os.walk(archive):
+                for name in files:
+                    if name.startswith("Cotizaciones") and name.lower().endswith(".csv"):
+                        matches.append(os.path.join(root, name))
+            if matches:
+                latest = max(matches, key=lambda p: (os.path.getmtime(p), p))
+                return read_csv(latest)
+        raise
 
 def truthy(value):
     return str(value or "").strip().lower() in ("true", "1", "si", "sí", "yes")
@@ -1160,6 +1174,7 @@ def _norm_cobro(row, tipo="principal"):
         "subtotal": round(f(row.get("Pedido Pago Subtotal", 0)), 2),
         "po": (row.get("Pedido Pago PO") or "").strip(),
         "complemento": (row.get("Pedido Pago Complemento de pago") or "").strip(),
+        "cotizacion_id": (row.get("Pedido Pago Cotizacion") or "").strip(),
     }
 
 
@@ -1244,7 +1259,7 @@ def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
     return signals
 
 
-def build_cobranza_dashboard(principales, secundarias, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+def build_cobranza_dashboard(principales, secundarias, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None, cotizaciones=None):
     _s = parse_date(fecha_desde)
     _e = parse_date(fecha_hasta)
     start_d = _s.date() if _s else None
@@ -1294,6 +1309,67 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     cobros_sin_factura = sum(1 for r in pp_periodo if not r["factura"])
     cobros_sin_cliente = sum(1 for r in pp_periodo if not r["cliente"])
     cobros_sin_fecha_asociacion = sum(1 for r in pp_periodo if not r["fecha_asociacion"])
+
+    # ─── Pendientes por cobrar ─────────────────────────────────────────────────
+    # paid_cot_ids: todos los IDs de cotización que aparecen en CUALQUIER pago (sin filtro de periodo)
+    paid_cot_ids = {r["cotizacion_id"] for r in pp_norm if r["cotizacion_id"]}
+
+    n_pendientes_cobro = 0
+    monto_pendiente_cobro = 0.0
+    tabla_pendientes = []
+    pendientes_temporal = None
+
+    if cotizaciones:
+        _iso_date = lambda dt: dt.date().isoformat() if dt else ""
+        aprobadas_cot = [r for r in cotizaciones if (r.get("Estado_cotizacion") or "").strip() == "Aprobada"]
+        pendientes_cot = [r for r in aprobadas_cot if r.get("Cotizacion_id", "").strip() not in paid_cot_ids]
+
+        n_pendientes_cobro = len(pendientes_cot)
+        monto_pendiente_cobro = round(sum(f(r.get("Total", 0)) for r in pendientes_cot), 2)
+
+        # Tabla de pendientes — top 20 por monto desc
+        def _norm_pend(r):
+            fap = parse_date(r.get("Fecha_aprobacion", ""))
+            return {
+                "cotizacion_id": r.get("Cotizacion_id", "").strip(),
+                "nombre": (r.get("Cotizacion_nombre") or "").strip(),
+                "cliente": (r.get("Cliente") or "").strip(),
+                "monto": round(f(r.get("Total", 0)), 2),
+                "fecha_aprobacion": _iso_date(fap),
+                "estado_pago": (r.get("Estado_pago") or "").strip(),
+                "po": (r.get("PO") or "").strip(),
+            }
+
+        tabla_pendientes = sorted(
+            [_norm_pend(r) for r in pendientes_cot],
+            key=lambda x: -x["monto"],
+        )[:20]
+
+        # Serie temporal de pendientes por Fecha_aprobacion
+        # Detectar rango automáticamente para mostrar distribución de antigüedad
+        pend_fechas = [parse_date(r.get("Fecha_aprobacion", "")) for r in pendientes_cot]
+        pend_fechas = [d for d in pend_fechas if d]
+        if pend_fechas:
+            pend_fmin = min(pend_fechas).date().isoformat()
+            pend_fmax = max(pend_fechas).date().isoformat()
+        else:
+            pend_fmin = fecha_desde
+            pend_fmax = fecha_hasta
+
+        def _fap_getter(r):
+            dt = parse_date(r.get("Fecha_aprobacion", ""))
+            return dt.isoformat() if dt else ""
+
+        pendientes_temporal = aggregate_temporal(
+            [{"_r": r, "monto": round(f(r.get("Total", 0)), 2)} for r in pendientes_cot],
+            date_getter=lambda x: _fap_getter(x["_r"]),
+            metric_getters={
+                "n": lambda x: 1,
+                "monto": lambda x: x["monto"],
+            },
+            fecha_desde=pend_fmin,
+            fecha_hasta=pend_fmax,
+        )
 
     # ─── Señales ───────────────────────────────────────────────────────────────
     kpis_pre = {"dias_cobro_mediana": dias_cobro_mediana, "dias_cobro_promedio": dias_cobro_promedio}
@@ -1380,6 +1456,8 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
             "cobros_sin_factura": cobros_sin_factura,
             "cobros_sin_cliente": cobros_sin_cliente,
             "cobros_sin_fecha_asociacion": cobros_sin_fecha_asociacion,
+            "n_pendientes_cobro": n_pendientes_cobro,
+            "monto_pendiente_cobro": monto_pendiente_cobro,
             "senales": len(signals),
         },
         "series": {
@@ -1392,10 +1470,12 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
                 },
                 "rangos": rangos,
             },
+            "pendientes_temporal": pendientes_temporal,
         },
         "tables": {
             "top_clientes": top_clientes,
             "cobros": tabla_cobros,
+            "pendientes": tabla_pendientes,
         },
         "signals": signals,
     }

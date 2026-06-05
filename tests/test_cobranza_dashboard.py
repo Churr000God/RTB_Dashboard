@@ -23,6 +23,7 @@ def _pp(**kw):
         "Pedido Pago PO": "",
         "Pedido Pago Fecha de aprobacion": "",
         "Pedido Pago Tipo de pago": "Transferencia",
+        "Pedido Pago Cotizacion": "",
     }
     base.update(kw)
     return base
@@ -281,6 +282,105 @@ class TestInvariantes(unittest.TestCase):
         r = build_cobranza_dashboard([], [], **PERIODO)
         self.assertEqual(r["kpis"]["cobros_total"], 0)
         self.assertAlmostEqual(r["kpis"]["monto_cobrado_total"], 0.0, places=2)
+
+
+def _cot(**kw):
+    """Factory para fila de cotización."""
+    base = {
+        "Cotizacion_id": "cot-test-1",
+        "Cotizacion_nombre": "COT-TEST",
+        "Cliente": "CLIENTE_X",
+        "Total": "5000",
+        "Subtotal_con_envio_venta": "4310",
+        "Estado_cotizacion": "Aprobada",
+        "Estado_pago": '["No pagada"]',
+        "Fecha_aprobacion": '{"start":"2026-05-10","end":null,"time_zone":null}',
+        "Fecha_creacion": "2026-05-05",
+        "PO": "",
+    }
+    base.update(kw)
+    return base
+
+
+class TestPendientesCobro(unittest.TestCase):
+
+    def _build_with_cots(self, pp_ids, cot_ids, cot_pagada_ids=None):
+        """pp_ids = IDs de cotización ya cobrados; cot_ids = todos los IDs de cotización en CSV."""
+        pp = [_pp(**{"Pedido Pago ID": f"pp-{i}", "Pedido Pago Cotizacion": pid,
+                     "Pedido Pago Total": "1000"})
+              for i, pid in enumerate(pp_ids)]
+        cots = [_cot(**{"Cotizacion_id": cid, "Total": "2000"}) for cid in cot_ids]
+        if cot_pagada_ids:
+            for c in cots:
+                if c["Cotizacion_id"] in cot_pagada_ids:
+                    c["Estado_pago"] = '["Pagada Total"]'
+        return build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+
+    def test_kpi_pendientes_count(self):
+        r = self._build_with_cots(["cot-A"], ["cot-A", "cot-B", "cot-C"])
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 2)
+
+    def test_kpi_pendientes_monto(self):
+        r = self._build_with_cots(["cot-A"], ["cot-A", "cot-B", "cot-C"])
+        self.assertAlmostEqual(r["kpis"]["monto_pendiente_cobro"], 4000.0, places=2)
+
+    def test_sin_cotizaciones_pendientes_cero(self):
+        r = build_cobranza_dashboard([_pp()], [], **PERIODO)
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 0)
+        self.assertAlmostEqual(r["kpis"]["monto_pendiente_cobro"], 0.0, places=2)
+
+    def test_todas_cobradas_pendientes_cero(self):
+        r = self._build_with_cots(["cot-A", "cot-B"], ["cot-A", "cot-B"])
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 0)
+
+    def test_cotizacion_no_aprobada_excluida(self):
+        pp = []
+        cots = [
+            _cot(**{"Cotizacion_id": "cot-APR", "Estado_cotizacion": "Aprobada"}),
+            _cot(**{"Cotizacion_id": "cot-EXP", "Estado_cotizacion": "Expirada"}),
+            _cot(**{"Cotizacion_id": "cot-COT", "Estado_cotizacion": "En Cotización"}),
+        ]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        # Solo la Aprobada cuenta como pendiente
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
+
+    def test_tabla_pendientes_en_resultado(self):
+        r = self._build_with_cots(["cot-A"], ["cot-A", "cot-B"])
+        self.assertIn("pendientes", r["tables"])
+        self.assertEqual(len(r["tables"]["pendientes"]), 1)
+        self.assertEqual(r["tables"]["pendientes"][0]["cotizacion_id"], "cot-B")
+
+    def test_tabla_pendientes_orden_monto_desc(self):
+        pp = []
+        cots = [
+            _cot(**{"Cotizacion_id": "cot-1", "Total": "1000"}),
+            _cot(**{"Cotizacion_id": "cot-2", "Total": "9000"}),
+            _cot(**{"Cotizacion_id": "cot-3", "Total": "3000"}),
+        ]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        montos = [x["monto"] for x in r["tables"]["pendientes"]]
+        self.assertEqual(montos, sorted(montos, reverse=True))
+
+    def test_pendientes_temporal_presente(self):
+        r = self._build_with_cots([], ["cot-A", "cot-B"])
+        self.assertIsNotNone(r["series"]["pendientes_temporal"])
+        self.assertIn("granularidad", r["series"]["pendientes_temporal"])
+
+    def test_pendientes_temporal_none_sin_cotizaciones(self):
+        r = build_cobranza_dashboard([_pp()], [], **PERIODO)
+        self.assertIsNone(r["series"]["pendientes_temporal"])
+
+    def test_pagos_fuera_de_periodo_aun_marcan_cobrada(self):
+        """Un cobro fuera del periodo analizado igual marca la cotización como cobrada."""
+        pp = [_pp(**{
+            "Pedido Pago Cotizacion": "cot-A",
+            "Pedido Pago Fecha de pago ": "2026-04-01",  # fuera de PERIODO (mayo)
+            "Pedido Pago Total": "5000",
+        })]
+        cots = [_cot(**{"Cotizacion_id": "cot-A"}), _cot(**{"Cotizacion_id": "cot-B"})]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        # cot-A está pagada (aunque el cobro esté fuera de periodo), cot-B pendiente
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
 
 
 if __name__ == "__main__":

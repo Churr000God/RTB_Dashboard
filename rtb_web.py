@@ -429,15 +429,24 @@ _COBRANZA_SECUNDARIAS_PATTERN = _re.compile(
 
 def find_latest_cobranza_csvs(data_dir: str | Path) -> tuple[Path, Path | None]:
     root = Path(data_dir)
-    pp_matches = [p for p in root.glob("Pagos_Principlaes_Facturas_Ventas_*.csv")
-                  if p.is_file() and _COBRANZA_PRINCIPALES_PATTERN.match(p.name)]
+    # Search data/ directly first; fall back to data_procesada/ subdirectories when data/ is empty
+    # (e.g. after n8n has archived the CSVs post-webhook)
+    def _find(pattern, compiled_re):
+        direct = [p for p in root.glob(pattern) if p.is_file() and compiled_re.match(p.name)]
+        if direct:
+            return direct
+        archive = root.parent / "data_procesada"
+        if archive.is_dir():
+            return [p for p in archive.rglob(pattern) if p.is_file() and compiled_re.match(p.name)]
+        return []
+
+    pp_matches = _find("Pagos_Principlaes_Facturas_Ventas_*.csv", _COBRANZA_PRINCIPALES_PATTERN)
     if not pp_matches:
         raise FileNotFoundError(
-            f"No se encontro Pagos_Principlaes_Facturas_Ventas_*.csv en {root.resolve()}"
+            f"No se encontro Pagos_Principlaes_Facturas_Ventas_*.csv en {root.resolve()} ni en data_procesada/"
         )
     pp_path = max(pp_matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
-    ps_matches = [p for p in root.glob("Pagos_Secundarias_Facturas_Ventas_*.csv")
-                  if p.is_file() and _COBRANZA_SECUNDARIAS_PATTERN.match(p.name)]
+    ps_matches = _find("Pagos_Secundarias_Facturas_Ventas_*.csv", _COBRANZA_SECUNDARIAS_PATTERN)
     ps_path = max(ps_matches, key=lambda p: (p.stat().st_mtime_ns, p.name)) if ps_matches else None
     return pp_path, ps_path
 
@@ -451,12 +460,17 @@ def publish_cobranza_snapshot(
     pp_path, ps_path = find_latest_cobranza_csvs(data_dir)
     ps_rows = read_csv(ps_path) if ps_path else []
     period_label = f"{fecha_desde} a {fecha_hasta}"
+    try:
+        cotizaciones = load_cotizaciones(data_dir)
+    except Exception:
+        cotizaciones = None
     cobranza = build_cobranza_dashboard(
         read_csv(pp_path),
         ps_rows,
         period_label=period_label,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
+        cotizaciones=cotizaciones,
     )
     files = {"principales": pp_path.name}
     if ps_path:
@@ -1194,6 +1208,29 @@ def render_index() -> str:
               </table>
             </div>
           </section>
+
+          <section class="status-section" id="cobranzaPendientesSection" hidden>
+            <h2 class="section-title">Cotizaciones pendientes de cobro</h2>
+            <p class="section-subtitle">Cotizaciones aprobadas que aún no tienen un pago registrado en Notion. Ordenadas por monto.</p>
+            <div class="section-body">
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="cobranzaPendientesVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="cobranzaPendientesVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="cobranzaPendientesChart" width="760" height="300" aria-label="Cotizaciones pendientes de cobro por periodo de aprobación"></canvas>
+                  <div class="chart-tooltip" id="cobranzaPendientesTooltip" hidden></div>
+                </div>
+              </div>
+              <div class="table-wrap" style="margin-top:16px">
+                <table class="data-table">
+                  <thead><tr><th>Cotización</th><th>Cliente</th><th>Monto</th><th>Aprobada</th><th>PO</th></tr></thead>
+                  <tbody id="cobranzaPendientesRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
         </section>
 
       </div>
@@ -1298,6 +1335,12 @@ def render_index() -> str:
     const cobranzaTopClientesTooltip = document.querySelector('#cobranzaTopClientesTooltip');
     const cobranzaSinFacturaSection = document.querySelector('#cobranzaSinFacturaSection');
     const cobranzaSinFacturaRows = document.querySelector('#cobranzaSinFacturaRows');
+    const cobranzaPendientesSection = document.querySelector('#cobranzaPendientesSection');
+    const cobranzaPendientesRows = document.querySelector('#cobranzaPendientesRows');
+    const cobranzaPendientesChart = document.querySelector('#cobranzaPendientesChart');
+    const cobranzaPendientesTooltip = document.querySelector('#cobranzaPendientesTooltip');
+    const cobranzaPendientesVistaMonto = document.querySelector('#cobranzaPendientesVistaMonto');
+    const cobranzaPendientesVistaCantidad = document.querySelector('#cobranzaPendientesVistaCantidad');
     const kpiGrid = document.querySelector('#kpiGrid');
     const estadoSection = document.querySelector('#estadoSection');
     const estadoRows = document.querySelector('#estadoRows');
@@ -1352,6 +1395,7 @@ def render_index() -> str:
     let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let comprasAnticiposState = { rows: [], periodos: [], activeIndex: null, points: [] };
     let cobranzaTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let cobranzaPendientesState = { rows: [], activeIndex: null, points: [], vista: 'monto' };
     let cobranzaTipoPagoChart = { slices: [], activeIndex: null };
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
@@ -4161,6 +4205,105 @@ def render_index() -> str:
       cobranzaTopClientesSection.hidden = false;
     }
 
+    function drawCobranzaPendientesChart(activeIndex) {
+      const rows = cobranzaPendientesState.rows;
+      if (!rows.length) { cobranzaPendientesState.points = []; return; }
+      const vista = cobranzaPendientesState.vista;
+      const values = rows.map((r) => vista === 'monto' ? r.monto : r.n);
+      const maxVal = Math.max(...values, 1);
+      const canvas = cobranzaPendientesChart;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.offsetWidth * dpr;
+      canvas.height = canvas.offsetHeight * dpr;
+      ctx.scale(dpr, dpr);
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      const pad = { top: 20, bottom: 36, left: 16, right: 16 };
+      const plotH = H - pad.top - pad.bottom;
+      const slot = (W - pad.left - pad.right) / rows.length;
+      const barW = Math.max(Math.min(slot * 0.65, 60), 8);
+      ctx.clearRect(0, 0, W, H);
+      cobranzaPendientesState.points = [];
+      rows.forEach((row, index) => {
+        const val = vista === 'monto' ? row.monto : row.n;
+        const isActive = activeIndex === index;
+        const barH = Math.max((val / maxVal) * plotH, 2);
+        const x = pad.left + slot * index + (slot - barW) / 2;
+        const y = pad.top + plotH - barH;
+        ctx.fillStyle = isActive ? '#c0392b' : '#e74c3c';
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.5;
+        drawRoundRect(ctx, x, y, barW, barH, 5);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isActive ? '#1d5368' : '#65717e';
+        ctx.font = `${isActive ? 700 : 500} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, pad.left + slot * index + slot / 2, pad.top + plotH + 14);
+        cobranzaPendientesState.points.push({ x: pad.left + slot * index + slot / 2, slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), row, index });
+      });
+    }
+
+    function setActiveCobranzaPendientes(index, event) {
+      cobranzaPendientesState.activeIndex = index >= 0 ? index : null;
+      drawCobranzaPendientesChart(cobranzaPendientesState.activeIndex);
+      cobranzaPendientesRows.querySelectorAll('tr').forEach((tr, i) => tr.classList.toggle('active', i === cobranzaPendientesState.activeIndex));
+      if (cobranzaPendientesState.activeIndex === null) { cobranzaPendientesTooltip.hidden = true; return; }
+      const row = cobranzaPendientesState.rows[cobranzaPendientesState.activeIndex];
+      if (!row) return;
+      if (event) placeTooltipNear(cobranzaPendientesTooltip, event.clientX, event.clientY);
+      cobranzaPendientesTooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Cotizaciones</span><strong>${formatNumber(row.n)}</strong></div>
+        <div><span>Monto pendiente</span><strong>${formatMoney(row.monto)}</strong></div>
+      `;
+      cobranzaPendientesTooltip.hidden = false;
+    }
+
+    function renderCobranzaPendientes(pendientesData, tabla) {
+      if (!pendientesData && (!tabla || !tabla.length)) { cobranzaPendientesSection.hidden = true; return; }
+      const periodos = (pendientesData && pendientesData.periodos) || [];
+      const granularidad = (pendientesData && pendientesData.granularidad) || 'mes';
+      const rows = periodos.map((p) => ({
+        etiqueta: p.etiqueta || '',
+        n: Number(p.n || 0),
+        monto: Number(p.monto || 0),
+      }));
+      cobranzaPendientesState.rows = rows;
+      if (rows.length) {
+        setActiveCobranzaPendientes(null);
+        cobranzaPendientesVistaMonto.addEventListener('click', () => {
+          cobranzaPendientesState.vista = 'monto';
+          cobranzaPendientesVistaMonto.classList.add('active');
+          cobranzaPendientesVistaCantidad.classList.remove('active');
+          drawCobranzaPendientesChart(null);
+        });
+        cobranzaPendientesVistaCantidad.addEventListener('click', () => {
+          cobranzaPendientesState.vista = 'cantidad';
+          cobranzaPendientesVistaCantidad.classList.add('active');
+          cobranzaPendientesVistaMonto.classList.remove('active');
+          drawCobranzaPendientesChart(null);
+        });
+        cobranzaPendientesChart.addEventListener('mousemove', (event) => {
+          const rect = cobranzaPendientesChart.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const idx = cobranzaPendientesState.points.findIndex((p) => x >= p.slotLeft && x < p.slotRight);
+          if (idx >= 0) setActiveCobranzaPendientes(idx, event);
+          else setActiveCobranzaPendientes(null);
+        });
+        cobranzaPendientesChart.addEventListener('mouseleave', () => setActiveCobranzaPendientes(null));
+      }
+      cobranzaPendientesRows.innerHTML = (tabla || []).map((r) => `
+        <tr>
+          <td>${escapeHtml(r.nombre || '')}</td>
+          <td>${escapeHtml(r.cliente || '—')}</td>
+          <td>${formatMoney(r.monto)}</td>
+          <td>${escapeHtml(r.fecha_aprobacion || '—')}</td>
+          <td>${escapeHtml(r.po || '—')}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="5">Sin pendientes.</td></tr>';
+      cobranzaPendientesSection.hidden = false;
+    }
+
     function renderCobranzaSinFactura(cobros) {
       const sinFact = (cobros || []).filter((r) => !r.fecha_asociacion && r.tipo === 'principal');
       if (!sinFact.length) { cobranzaSinFacturaSection.hidden = true; return; }
@@ -4231,6 +4374,17 @@ def render_index() -> str:
           <p class="kpi-note">Monto exacto del 2º cobro no capturado en Notion</p>
         </article>`);
       }
+      const nPend = Number(kpis.n_pendientes_cobro || 0);
+      if (nPend > 0) {
+        cards.push(`<article class="kpi-card warning">
+          <h2>Pendientes de cobro</h2>
+          <div class="kpi-pair">
+            ${metric('Cotizaciones aprobadas', String(nPend), 'Sin pago registrado en Notion')}
+            ${metric('Monto pendiente', kpiValue(kpis, 'monto_pendiente_cobro', 'money'), 'Suma Total c/IVA pendiente')}
+          </div>
+          <p class="kpi-note">Cotizaciones aprobadas no vinculadas a ningún pago</p>
+        </article>`);
+      }
       cobranzaKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
       renderCobranzaTemporal(body.series?.temporal);
@@ -4238,6 +4392,7 @@ def render_index() -> str:
       renderCobranzaDias(body.series?.dias_cobro);
       renderCobranzaTopClientes(body.tables?.top_clientes || []);
       renderCobranzaSinFactura(body.tables?.cobros || []);
+      renderCobranzaPendientes(body.series?.pendientes_temporal, body.tables?.pendientes);
     }
 
     async function loadCobranza() {
