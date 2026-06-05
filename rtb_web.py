@@ -1182,12 +1182,22 @@ def render_index() -> str:
           <section class="status-section" id="cobranzaDiasSection" hidden>
             <h2 class="section-title">Días de cobranza</h2>
             <p class="section-subtitle">Lag entre la fecha de asociación a factura y la fecha de pago recibido.</p>
-            <div id="cobranzaDiasKpis" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Rango</th><th>Cobros</th><th>%</th></tr></thead>
-                <tbody id="cobranzaDiasRangosRows"></tbody>
-              </table>
+            <div id="cobranzaDiasKpis" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Rango</th><th>Cobros</th><th>%</th></tr></thead>
+                  <tbody id="cobranzaDiasRangosRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="cobranzaDiasPie" width="520" height="520" aria-label="Distribución días de cobranza" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="cobranzaDiasPieCenter"><strong>100%</strong><span>Cobros</span></div>
+                </div>
+                <div class="pie-tooltip" id="cobranzaDiasTooltip" hidden></div>
+                <div class="pie-legend" id="cobranzaDiasLegend"></div>
+              </div>
             </div>
           </section>
 
@@ -1330,6 +1340,10 @@ def render_index() -> str:
     const cobranzaDiasSection = document.querySelector('#cobranzaDiasSection');
     const cobranzaDiasKpis = document.querySelector('#cobranzaDiasKpis');
     const cobranzaDiasRangosRows = document.querySelector('#cobranzaDiasRangosRows');
+    const cobranzaDiasPie = document.querySelector('#cobranzaDiasPie');
+    const cobranzaDiasPieCenter = document.querySelector('#cobranzaDiasPieCenter');
+    const cobranzaDiasTooltip = document.querySelector('#cobranzaDiasTooltip');
+    const cobranzaDiasLegend = document.querySelector('#cobranzaDiasLegend');
     const cobranzaTopClientesSection = document.querySelector('#cobranzaTopClientesSection');
     const cobranzaTopClientesChart = document.querySelector('#cobranzaTopClientesChart');
     const cobranzaTopClientesTooltip = document.querySelector('#cobranzaTopClientesTooltip');
@@ -3930,6 +3944,9 @@ def render_index() -> str:
     // ─── Cobranza ─────────────────────────────────────────────────────────────
 
     const COBRANZA_TIPO_PAGO_COLORS = ['#276f86','#159895','#e07b39','#9b59b6','#d0b56b','#d96058','#2ecc71','#3498db','#e74c3c','#95a5a6'];
+    // Verde rápido → rojo lento (orden: Mismo día, 1-3, 4-7, 8-15, 16-30, >30)
+    const DIAS_COBRO_COLORS = ['#27ae60','#2ecc71','#f1c40f','#e67e22','#d35400','#c0392b'];
+    let cobranzaDiasChart = { slices: [], activeIndex: null };
 
     function renderCobranzaTipoPagoPie(activeIndex = null) {
       const ctx = cobranzaTipoPagoPie.getContext('2d');
@@ -4169,6 +4186,69 @@ def render_index() -> str:
     });
     cobranzaTemporalRows.addEventListener('mouseleave', () => setActiveCobranzaTemporal(null));
 
+    function drawCobranzaDiasPie(activeIndex = null) {
+      const ctx = cobranzaDiasPie.getContext('2d');
+      const rect = cobranzaDiasPie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      cobranzaDiasPie.width = Math.max(1, Math.round(rect.width * dpr));
+      cobranzaDiasPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      cobranzaDiasChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd'; ctx.fill();
+      ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function cobranzaDiasSliceAtEvent(event) {
+      const rect = cobranzaDiasPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return cobranzaDiasChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveCobranzaDias(index, event) {
+      cobranzaDiasChart.activeIndex = index >= 0 ? index : null;
+      drawCobranzaDiasPie(cobranzaDiasChart.activeIndex);
+      cobranzaDiasLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === cobranzaDiasChart.activeIndex));
+      cobranzaDiasRangosRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === cobranzaDiasChart.activeIndex));
+      if (cobranzaDiasChart.activeIndex === null) {
+        cobranzaDiasTooltip.hidden = true;
+        cobranzaDiasPieCenter.innerHTML = '<strong>100%</strong><span>Cobros</span>';
+        return;
+      }
+      const slice = cobranzaDiasChart.slices[cobranzaDiasChart.activeIndex];
+      cobranzaDiasPieCenter.innerHTML = `<strong>${formatPercent(slice.pct)}</strong><span>${escapeHtml(slice.rango)}</span>`;
+      if (event) placeTooltipNear(cobranzaDiasTooltip, event.clientX, event.clientY);
+      cobranzaDiasTooltip.innerHTML = `
+        <b>${escapeHtml(slice.rango)}</b>
+        <div><span>Cobros</span><strong>${formatNumber(slice.n)}</strong></div>
+        <div><span>% del total</span><strong>${formatPercent(slice.pct)}</strong></div>
+      `;
+      cobranzaDiasTooltip.hidden = false;
+    }
+
     function renderCobranzaDias(diasCobro) {
       const stats = diasCobro?.stats || {};
       const rangos = diasCobro?.rangos || [];
@@ -4180,14 +4260,52 @@ def render_index() -> str:
         <div class="kpi-inline">${metric('Máximo', formatNumber(stats.max) + ' días', 'Cobro con mayor lag')}</div>
         <div class="kpi-inline">${metric('Con dato', formatNumber(n), 'Cobros con fecha de asociación')}</div>
       `;
-      cobranzaDiasRangosRows.innerHTML = rangos.map((r) => `
-        <tr>
-          <td><strong>${escapeHtml(r.rango)}</strong></td>
+      // Tabla
+      cobranzaDiasRangosRows.innerHTML = rangos.map((r, index) => {
+        const color = DIAS_COBRO_COLORS[index % DIAS_COBRO_COLORS.length];
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span><strong>${escapeHtml(r.rango)}</strong></span></td>
           <td>${formatNumber(r.n)}</td>
           <td>${formatPercent(r.pct)}</td>
-        </tr>
-      `).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+        </tr>`;
+      }).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+      // Pie
+      let current = -Math.PI / 2;
+      const totalN = rangos.reduce((s, r) => s + Number(r.n || 0), 0);
+      cobranzaDiasChart.slices = rangos.map((r, index) => {
+        const value = Number(r.n || 0);
+        const span = totalN ? (value / totalN) * Math.PI * 2 : 0;
+        const color = DIAS_COBRO_COLORS[index % DIAS_COBRO_COLORS.length];
+        const slice = { rango: r.rango, n: value, pct: r.pct, color, start: current, end: current + span };
+        current += span;
+        return slice;
+      });
+      cobranzaDiasLegend.innerHTML = cobranzaDiasChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.rango)}</span>
+        </button>
+      `).join('');
+      cobranzaDiasLegend.querySelectorAll('.legend-item').forEach((btn) => {
+        const idx = Number(btn.dataset.index);
+        btn.addEventListener('mouseenter', () => setActiveCobranzaDias(idx));
+        btn.addEventListener('mouseleave', () => setActiveCobranzaDias(null));
+        btn.addEventListener('click', () => {
+          cobranzaDiasChart.activeIndex === idx ? setActiveCobranzaDias(null) : setActiveCobranzaDias(idx);
+        });
+      });
+      cobranzaDiasPie.addEventListener('mousemove', (event) => {
+        const idx = cobranzaDiasSliceAtEvent(event);
+        setActiveCobranzaDias(idx != null ? idx : null, event);
+      });
+      cobranzaDiasPie.addEventListener('mouseleave', () => setActiveCobranzaDias(null));
+      cobranzaDiasRangosRows.addEventListener('mousemove', (event) => {
+        const tr = event.target.closest('tr[data-index]');
+        if (tr) setActiveCobranzaDias(Number(tr.dataset.index));
+      });
+      cobranzaDiasRangosRows.addEventListener('mouseleave', () => setActiveCobranzaDias(null));
       cobranzaDiasSection.hidden = false;
+      requestAnimationFrame(() => drawCobranzaDiasPie(null));
     }
 
     function renderCobranzaTopClientes(topClientes) {
