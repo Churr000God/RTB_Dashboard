@@ -18,7 +18,12 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from rtb_analisis import build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard, build_ventas_dashboard, find_latest_csv, find_latest_facturacion_csv, load_cotizaciones, read_csv
+from rtb_analisis import (
+    build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard,
+    build_gastos_operativos_dashboard, build_pagos_proveedores_dashboard, build_ventas_dashboard,
+    find_latest_csv, find_latest_facturacion_csv, find_latest_gastos_operativos_csv,
+    find_latest_pagos_proveedores_csvs, load_cotizaciones, read_csv,
+)
 
 
 WEBHOOK_URLS = {
@@ -31,6 +36,8 @@ SALES_SNAPSHOT_FILENAME = "ventas_latest.json"
 FACTURACION_SNAPSHOT_FILENAME = "facturacion_latest.json"
 COMPRAS_SNAPSHOT_FILENAME = "compras_latest.json"
 COBRANZA_SNAPSHOT_FILENAME = "cobranza_latest.json"
+PAGOS_PROVEEDORES_SNAPSHOT_FILENAME = "pagos_proveedores_latest.json"
+GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
@@ -494,6 +501,76 @@ def load_cobranza_payload(data_dir: str = "data", dashboard_dir: str = "dashboar
     return build_cobranza_dashboard(read_csv(pp_path), ps_rows)
 
 
+def publish_pagos_proveedores_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    fc_path, nc_path = find_latest_pagos_proveedores_csvs(data_dir)
+    nc_rows = read_csv(nc_path) if nc_path else []
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    pagos = build_pagos_proveedores_dashboard(
+        read_csv(fc_path),
+        nc_rows,
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    files = {"pagos_fc": fc_path.name}
+    if nc_path:
+        files["notas_credito"] = nc_path.name
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": files,
+        "dashboard": {"pagos_proveedores": pagos},
+    }
+    atomic_write_json(Path(dashboard_dir) / PAGOS_PROVEEDORES_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_pagos_proveedores_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / PAGOS_PROVEEDORES_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["pagos_proveedores"]
+    fc_path, nc_path = find_latest_pagos_proveedores_csvs(data_dir)
+    nc_rows = read_csv(nc_path) if nc_path else []
+    return build_pagos_proveedores_dashboard(read_csv(fc_path), nc_rows)
+
+
+def publish_gastos_operativos_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    g_path = find_latest_gastos_operativos_csv(data_dir)
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    gastos = build_gastos_operativos_dashboard(
+        read_csv(g_path),
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": {"gastos_operativos": g_path.name},
+        "dashboard": {"gastos_operativos": gastos},
+    }
+    atomic_write_json(Path(dashboard_dir) / GASTOS_OPERATIVOS_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_gastos_operativos_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / GASTOS_OPERATIVOS_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["gastos_operativos"]
+    g_path = find_latest_gastos_operativos_csv(data_dir)
+    return build_gastos_operativos_dashboard(read_csv(g_path))
+
+
 def render_index() -> str:
     today = datetime.now()
     _end = today.strftime("%Y-%m-%d")
@@ -565,7 +642,7 @@ def render_index() -> str:
     .module-tab:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(208,181,107,.22); }
     .module-tab.active { border-color: var(--sidebar); background: var(--sidebar); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
     .canvas { min-height: calc(100vh - 104px); border: 1px dashed #c8d2dc; border-radius: 10px; background: var(--paper); padding: 16px; }
-    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden] { display: none; }
+    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden] { display: none; }
     .compras-panel { display: grid; gap: 14px; }
     .section-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
     .section-body.pie-layout { grid-template-columns: minmax(0, 1.4fr) minmax(260px, .9fr); align-items: center; }
@@ -765,6 +842,8 @@ def render_index() -> str:
         <button class="module-tab" type="button" data-module="operacion">Operacion</button>
         <button class="module-tab" type="button" data-module="compras">Compras</button>
         <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
+        <button class="module-tab" type="button" data-module="pagos_proveedores">Pagos Proveedores</button>
+        <button class="module-tab" type="button" data-module="gastos_operativos">Gastos Operativos</button>
         <button class="module-tab" type="button" data-module="inventario">Inventario</button>
         <button class="module-tab" type="button" data-module="finanzas">Finanzas</button>
         <button class="module-tab" type="button" data-module="pnl">P&amp;L</button>
@@ -1219,6 +1298,13 @@ def render_index() -> str:
             </div>
           </section>
 
+          <section class="status-section" id="cobranzaCreditoActivoSection" hidden>
+            <h2 class="section-title">Top 10 clientes con crédito activo</h2>
+            <p class="section-subtitle">Ranking por monto pendiente de cobro — suma de cotizaciones aprobadas sin pago registrado.</p>
+            <div class="hbar-chart" id="cobranzaCreditoActivoChart"></div>
+            <div class="chart-tooltip" id="cobranzaCreditoActivoTooltip" hidden></div>
+          </section>
+
           <section class="status-section" id="cobranzaPendientesSection" hidden>
             <h2 class="section-title">Cotizaciones pendientes de cobro</h2>
             <p class="section-subtitle">Cotizaciones aprobadas que aún no tienen un pago registrado en Notion. Ordenadas por monto.</p>
@@ -1239,6 +1325,178 @@ def render_index() -> str:
                   <tbody id="cobranzaPendientesRows"></tbody>
                 </table>
               </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="pagos_proveedoresPanel" class="pagos_proveedores-panel" aria-label="Pagos a proveedores" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="pagosProveedoresKpiGrid">
+            <p class="panel-state">Cargando pagos a proveedores...</p>
+          </div>
+
+          <section class="status-section" id="pagosTemporalSection" hidden>
+            <h2 class="section-title" id="pagosTemporalTitle">Comportamiento temporal</h2>
+            <p class="section-subtitle" id="pagosTemporalSubtitle"></p>
+            <div class="section-body">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th id="pagosTemporalHeading">Per.</th><th>Pagos</th><th>Monto pagado</th></tr></thead>
+                  <tbody id="pagosTemporalRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="pagosTemporalVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="pagosTemporalVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="pagosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de pagos a proveedores"></canvas>
+                  <div class="chart-tooltip" id="pagosTemporalTooltip" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="pagosTipoPagoSection" hidden>
+            <h2 class="section-title">Tipo de pago</h2>
+            <p class="section-subtitle">Distribución de pagos por forma de pago a proveedores.</p>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Tipo</th><th>Pagos</th><th>Monto</th><th>%</th></tr></thead>
+                  <tbody id="pagosTipoPagoRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="pagosTipoPagoPie" width="520" height="520" aria-label="Tipo de pago proveedores" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="pagosTipoPagoPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="pie-tooltip" id="pagosTipoPagoTooltip" hidden></div>
+                <div class="pie-legend" id="pagosTipoPagoLegend"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="pagosTopProveedoresSection" hidden>
+            <h2 class="section-title">Top proveedores por monto pagado</h2>
+            <p class="section-subtitle">Mayores pagos acumulados en el periodo.</p>
+            <div class="section-body">
+              <div class="hbar-chart" id="pagosTopProveedoresChart"></div>
+              <div class="pie-tooltip" id="pagosTopProveedoresTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="pagosNotasSection" hidden>
+            <h2 class="section-title">Notas de crédito y anticipos</h2>
+            <p class="section-subtitle">Documentos complementarios: notas de crédito y facturas de anticipo pagadas a proveedores.</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Proveedor</th><th>Documento</th><th>Tipo</th><th>Factura asociada</th><th style="min-width:100px">Tipo pago</th><th>Monto</th><th>Estado</th></tr></thead>
+                <tbody id="pagosNotasRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="status-section" id="pagosDetalleSection" hidden>
+            <h2 class="section-title">Detalle de pagos</h2>
+            <p class="section-subtitle">Top 50 pagos del periodo por monto.</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Proveedor</th><th>Factura</th><th>Fecha</th><th style="min-width:110px">Tipo pago</th><th>Monto</th><th>NC</th></tr></thead>
+                <tbody id="pagosDetalleRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="gastos_operativosPanel" class="gastos_operativos-panel" aria-label="Gastos operativos" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="gastosOperativosKpiGrid">
+            <p class="panel-state">Cargando gastos operativos...</p>
+          </div>
+
+          <section class="status-section" id="gastosTemporalSection" hidden>
+            <h2 class="section-title" id="gastosTemporalTitle">Comportamiento temporal</h2>
+            <p class="section-subtitle" id="gastosTemporalSubtitle"></p>
+            <div class="section-body">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th id="gastosTemporalHeading">Per.</th><th>Gastos</th><th>Monto</th></tr></thead>
+                  <tbody id="gastosTemporalRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap">
+                  <div class="chart-view-toggle">
+                    <button class="chart-view-btn active" id="gastosTemporalVistaMonto" type="button">Monto</button>
+                    <button class="chart-view-btn" id="gastosTemporalVistaCantidad" type="button">Cantidad</button>
+                  </div>
+                  <canvas class="weekly-chart" id="gastosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de gastos operativos"></canvas>
+                  <div class="chart-tooltip" id="gastosTemporalTooltip" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="gastosCategoriaSection" hidden>
+            <h2 class="section-title">Distribución por categoría</h2>
+            <p class="section-subtitle">Gasto total agrupado por categoría operativa.</p>
+            <div class="section-body pie-layout">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Categoría</th><th>#</th><th>Monto</th><th>%</th></tr></thead>
+                  <tbody id="gastosCategoriaRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="pie-chart-wrap">
+                  <canvas id="gastosCategoriaPie" width="520" height="520" aria-label="Categorías de gastos operativos" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <div class="pie-center" id="gastosCategoriaPieCenter"><strong>100%</strong><span>Monto</span></div>
+                </div>
+                <div class="pie-tooltip" id="gastosCategoriaTooltip" hidden></div>
+                <div class="pie-legend" id="gastosCategoriaPieLegend"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="gastosTopProveedoresSection" hidden>
+            <h2 class="section-title">Top proveedores</h2>
+            <p class="section-subtitle">Mayores gastos acumulados en el periodo por proveedor.</p>
+            <div class="section-body">
+              <div class="hbar-chart" id="gastosTopProveedoresChart"></div>
+              <div class="pie-tooltip" id="gastosTopProveedoresTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="gastosTarjetaSection" hidden>
+            <h2 class="section-title">Gasto por tarjeta</h2>
+            <p class="section-subtitle">Distribución por número de tarjeta — útil para conciliación bancaria.</p>
+            <div class="section-body">
+              <div class="hbar-chart" id="gastosTarjetaChart"></div>
+              <div class="pie-tooltip" id="gastosTarjetaTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="gastosFiscalSection" hidden>
+            <h2 class="section-title">Análisis fiscal</h2>
+            <p class="section-subtitle">Desglose deducible vs no deducible e IVA acreditable.</p>
+            <div id="gastosFiscalCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Tipo</th><th>#</th><th>Monto</th><th>IVA</th></tr></thead>
+                <tbody id="gastosFiscalRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="status-section" id="gastosDetalleSection" hidden>
+            <h2 class="section-title">Detalle de gastos</h2>
+            <p class="section-subtitle">Top 50 gastos del periodo por monto.</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Descripción</th><th>Categoría</th><th>Proveedor</th><th>Fecha</th><th>Tarjeta</th><th>Total</th><th style="min-width:70px">Deducible</th></tr></thead>
+                <tbody id="gastosDetalleRows"></tbody>
+              </table>
             </div>
           </section>
         </section>
@@ -1321,6 +1579,8 @@ def render_index() -> str:
     const comprasCfdiTooltip = document.querySelector('#comprasCfdiTooltip');
     const comprasCfdiLegend = document.querySelector('#comprasCfdiLegend');
     const cobranzaPanel = document.querySelector('#cobranzaPanel');
+    const pagosProveedoresPanel = document.querySelector('#pagos_proveedoresPanel');
+    const gastosOperativosPanel = document.querySelector('#gastos_operativosPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
@@ -1347,6 +1607,9 @@ def render_index() -> str:
     const cobranzaTopClientesSection = document.querySelector('#cobranzaTopClientesSection');
     const cobranzaTopClientesChart = document.querySelector('#cobranzaTopClientesChart');
     const cobranzaTopClientesTooltip = document.querySelector('#cobranzaTopClientesTooltip');
+    const cobranzaCreditoActivoSection = document.querySelector('#cobranzaCreditoActivoSection');
+    const cobranzaCreditoActivoChart = document.querySelector('#cobranzaCreditoActivoChart');
+    const cobranzaCreditoActivoTooltip = document.querySelector('#cobranzaCreditoActivoTooltip');
     const cobranzaSinFacturaSection = document.querySelector('#cobranzaSinFacturaSection');
     const cobranzaSinFacturaRows = document.querySelector('#cobranzaSinFacturaRows');
     const cobranzaPendientesSection = document.querySelector('#cobranzaPendientesSection');
@@ -1401,6 +1664,8 @@ def render_index() -> str:
     let facturacionLoaded = false;
     let comprasLoaded = false;
     let cobranzaLoaded = false;
+    let pagosProveedoresLoaded = false;
+    let gastosOperativosLoaded = false;
     let estadoChart = { slices: [], activeIndex: null };
     let facturacionEstadoChart = { slices: [], activeIndex: null };
     let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
@@ -1411,6 +1676,10 @@ def render_index() -> str:
     let cobranzaTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let cobranzaPendientesState = { rows: [], activeIndex: null, points: [], vista: 'monto' };
     let cobranzaTipoPagoChart = { slices: [], activeIndex: null };
+    let pagosTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let pagosTipoPagoChart = { slices: [], activeIndex: null };
+    let gastosTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let gastosCategoriaChart = { slices: [], activeIndex: null };
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -4329,6 +4598,21 @@ def render_index() -> str:
       cobranzaTopClientesSection.hidden = false;
     }
 
+    function renderCobranzaCreditoActivo(data) {
+      if (!data || !data.length) { cobranzaCreditoActivoSection.hidden = true; return; }
+      renderTopChart(cobranzaCreditoActivoChart, cobranzaCreditoActivoTooltip, data, {
+        barField: 'm',
+        labelField: 'cliente',
+        color: '#e74c3c',
+        tooltipFn: (d) => `
+          <b>${escapeHtml(d.cliente || '—')}</b>
+          <div><span>Cotizaciones pendientes</span><strong>${formatNumber(d.n)}</strong></div>
+          <div><span>Monto pendiente</span><strong>${formatMoney(d.m)}</strong></div>
+        `,
+      });
+      cobranzaCreditoActivoSection.hidden = false;
+    }
+
     function drawCobranzaPendientesChart(activeIndex) {
       const rows = cobranzaPendientesState.rows;
       if (!rows.length) { cobranzaPendientesState.points = []; return; }
@@ -4516,6 +4800,7 @@ def render_index() -> str:
       renderCobranzaDias(body.series?.dias_cobro);
       renderCobranzaTopClientes(body.tables?.top_clientes || []);
       renderCobranzaSinFactura(body.tables?.cobros || []);
+      renderCobranzaCreditoActivo(body.tables?.top_clientes_pendientes || []);
       renderCobranzaPendientes(body.series?.pendientes_temporal, body.tables?.pendientes);
     }
 
@@ -4554,16 +4839,469 @@ def render_index() -> str:
       }
     }
 
+    // ── MÓDULO PAGOS A PROVEEDORES ────────────────────────────────────────────
+    const PAGOS_TP_COLORS = ['#276f86','#d0b56b','#d96058','#57c5b6','#8a6f35','#159895','#5b6673','#1d5368','#c6ad6a','#225e73'];
+
+    function renderPagosTipoPagoPie(activeIndex = null) {
+      const canvas2 = document.querySelector('#pagosTipoPagoPie');
+      if (!canvas2 || !pagosTipoPagoChart.slices.length) return;
+      const ctx = canvas2.getContext('2d');
+      resizeCanvasToDisplay(canvas2, ctx);
+      const W = canvas2.width, H = canvas2.height;
+      const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 8, ri = r * 0.52;
+      ctx.clearRect(0, 0, W, H);
+      pagosTipoPagoChart.slices.forEach((s, i) => {
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, s.start, s.end);
+        ctx.closePath();
+        ctx.fillStyle = i === activeIndex ? PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length] + 'cc' : PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length];
+        ctx.fill();
+        if (i === activeIndex) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      const center = document.querySelector('#pagosTipoPagoPieCenter');
+      if (center) {
+        if (activeIndex !== null && pagosTipoPagoChart.slices[activeIndex]) {
+          const s = pagosTipoPagoChart.slices[activeIndex];
+          center.innerHTML = `<strong>${s.pct}</strong><span>${escapeHtml(s.label)}</span>`;
+        } else { center.innerHTML = '<strong>100%</strong><span>Monto</span>'; }
+      }
+    }
+
+    function pagosTipoPagoSliceAtEvent(event) {
+      const canvas2 = document.querySelector('#pagosTipoPagoPie');
+      const rect = canvas2.getBoundingClientRect();
+      const x = event.clientX - rect.left - canvas2.offsetWidth / 2;
+      const y = event.clientY - rect.top - canvas2.offsetHeight / 2;
+      let angle = Math.atan2(y, x); if (angle < -Math.PI / 2) angle += 2 * Math.PI;
+      return pagosTipoPagoChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActivePagosTipoPago(index, event) {
+      pagosTipoPagoChart.activeIndex = index >= 0 ? index : null;
+      renderPagosTipoPagoPie(pagosTipoPagoChart.activeIndex);
+      const legend = document.querySelector('#pagosTipoPagoLegend');
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === pagosTipoPagoChart.activeIndex));
+      const tbody = document.querySelector('#pagosTipoPagoRows');
+      if (tbody) tbody.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === pagosTipoPagoChart.activeIndex));
+      const tooltip = document.querySelector('#pagosTipoPagoTooltip');
+      if (tooltip) {
+        if (index >= 0 && pagosTipoPagoChart.slices[index]) {
+          const s = pagosTipoPagoChart.slices[index];
+          tooltip.innerHTML = `<strong>${escapeHtml(s.label)}</strong><br>Monto: ${s.monto}<br>Pagos: ${s.n}<br>${s.pct}`;
+          tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
+        } else { tooltip.hidden = true; }
+      }
+    }
+
+    function renderPagosTipoPago(tipoPago) {
+      const section = document.querySelector('#pagosTipoPagoSection');
+      if (!tipoPago || !tipoPago.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const total = tipoPago.reduce((s, t) => s + (t.m || 0), 0);
+      const tbody = document.querySelector('#pagosTipoPagoRows');
+      if (tbody) tbody.innerHTML = tipoPago.map((t, i) => {
+        const pct = total > 0 ? ((t.m / total) * 100).toFixed(1) : 0;
+        return `<tr><td style="color:${PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length]};font-weight:700">${escapeHtml(t.tipo)}</td><td>${t.n}</td><td>${formatMoney(t.m)}</td><td>${pct}%</td></tr>`;
+      }).join('');
+      let angle = -Math.PI / 2;
+      pagosTipoPagoChart.slices = tipoPago.map((t, i) => {
+        const pct = total > 0 ? t.m / total : 0;
+        const sweep = pct * 2 * Math.PI;
+        const slice = { label: t.tipo, start: angle, end: angle + sweep, pct: (pct * 100).toFixed(1) + '%', n: t.n, monto: formatMoney(t.m) };
+        angle += sweep; return slice;
+      });
+      renderPagosTipoPagoPie();
+      const legend = document.querySelector('#pagosTipoPagoLegend');
+      if (legend) legend.innerHTML = tipoPago.map((t, i) => `<span class="legend-item" data-index="${i}"><span class="legend-swatch" style="background:${PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length]}"></span>${escapeHtml(t.tipo)}</span>`).join('');
+      const pie = document.querySelector('#pagosTipoPagoPie');
+      const tooltip = document.querySelector('#pagosTipoPagoTooltip');
+      if (pie) {
+        pie.addEventListener('mousemove', (e) => setActivePagosTipoPago(pagosTipoPagoSliceAtEvent(e), e));
+        pie.addEventListener('mouseleave', () => { setActivePagosTipoPago(-1, {}); if (tooltip) tooltip.hidden = true; });
+      }
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => {
+        item.addEventListener('mouseenter', (e) => setActivePagosTipoPago(i, e));
+        item.addEventListener('mouseleave', () => { setActivePagosTipoPago(-1, {}); if (tooltip) tooltip.hidden = true; });
+      });
+    }
+
+    function drawPagosTemporalChart(activeIndex = null) {
+      const canvas2 = document.querySelector('#pagosTemporalChart');
+      if (!canvas2 || !pagosTemporalState.rows.length) return;
+      const ctx = canvas2.getContext('2d');
+      resizeCanvasToDisplay(canvas2, ctx);
+      const W = canvas2.width, H = canvas2.height, pad = { t: 20, r: 20, b: 40, l: 70 };
+      const rows = pagosTemporalState.rows;
+      const vista = pagosTemporalState.vista;
+      const vals = rows.map((r) => vista === 'monto' ? (r.monto || 0) : (r.pagos || 0));
+      const maxV = Math.max(...vals, 1);
+      const barW = Math.max(4, ((W - pad.l - pad.r) / rows.length) * 0.6);
+      const step = (W - pad.l - pad.r) / rows.length;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, H);
+      rows.forEach((row, i) => {
+        const val = vals[i];
+        const x = pad.l + i * step + step / 2;
+        const barH = (val / maxV) * (H - pad.t - pad.b);
+        const y = H - pad.b - barH;
+        const color = i === activeIndex ? '#159895' : '#276f86';
+        ctx.fillStyle = color; drawRoundRect(ctx, x - barW / 2, y, barW, barH, 3); ctx.fill();
+        ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(row.etiqueta, x, H - pad.b + 14);
+      });
+      ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+      [0, 0.5, 1].forEach((f) => {
+        const y = H - pad.b - f * (H - pad.t - pad.b);
+        const v = f * maxV;
+        ctx.fillText(vista === 'monto' ? formatMoney(v) : Math.round(v), pad.l - 6, y + 4);
+      });
+      pagosTemporalState.points = rows.map((_, i) => pad.l + i * step + step / 2);
+    }
+
+    function renderPagosTemporal(temporal) {
+      const section = document.querySelector('#pagosTemporalSection');
+      if (!temporal || !temporal.periodos) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const heading = document.querySelector('#pagosTemporalHeading');
+      const title = document.querySelector('#pagosTemporalTitle');
+      const subtitle = document.querySelector('#pagosTemporalSubtitle');
+      if (heading) heading.textContent = temporal.table_heading || 'Per.';
+      if (title) title.textContent = temporal.behavior_title || 'Comportamiento temporal';
+      if (subtitle) subtitle.textContent = temporal.hint || '';
+      const tbody = document.querySelector('#pagosTemporalRows');
+      if (tbody) tbody.innerHTML = temporal.periodos.map((p) =>
+        `<tr><td>${escapeHtml(p.etiqueta)}</td><td>${p.pagos || 0}</td><td>${formatMoney(p.monto || 0)}</td></tr>`
+      ).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+      pagosTemporalState.rows = temporal.periodos;
+      pagosTemporalState.tendencias = temporal.tendencias || null;
+      drawPagosTemporalChart();
+      const chart = document.querySelector('#pagosTemporalChart');
+      const tooltip = document.querySelector('#pagosTemporalTooltip');
+      if (chart) {
+        chart.addEventListener('mousemove', (e) => {
+          const rect = chart.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          let closest = -1, minD = Infinity;
+          pagosTemporalState.points.forEach((px, i) => { const d = Math.abs(px - mx); if (d < minD) { minD = d; closest = i; }});
+          if (closest >= 0) {
+            drawPagosTemporalChart(closest);
+            const p = pagosTemporalState.rows[closest];
+            if (tooltip) { tooltip.innerHTML = `<strong>${escapeHtml(p.etiqueta)}</strong><br>Pagos: ${p.pagos || 0}<br>Monto: ${formatMoney(p.monto || 0)}`; tooltip.hidden = false; placeTooltipNear(tooltip, e.clientX, e.clientY); }
+          }
+        });
+        chart.addEventListener('mouseleave', () => { drawPagosTemporalChart(); if (tooltip) tooltip.hidden = true; });
+      }
+      const btnMonto = document.querySelector('#pagosTemporalVistaMonto');
+      const btnCant = document.querySelector('#pagosTemporalVistaCantidad');
+      if (btnMonto) btnMonto.addEventListener('click', () => { pagosTemporalState.vista = 'monto'; btnMonto.classList.add('active'); if (btnCant) btnCant.classList.remove('active'); drawPagosTemporalChart(); });
+      if (btnCant) btnCant.addEventListener('click', () => { pagosTemporalState.vista = 'cantidad'; btnCant.classList.add('active'); if (btnMonto) btnMonto.classList.remove('active'); drawPagosTemporalChart(); });
+    }
+
+    function renderPagosNotas(notas) {
+      const section = document.querySelector('#pagosNotasSection');
+      if (!notas || !notas.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const tbody = document.querySelector('#pagosNotasRows');
+      if (tbody) tbody.innerHTML = notas.map((r) =>
+        `<tr><td>${escapeHtml(r.proveedor)}</td><td>${escapeHtml(r.numero_doc)}</td><td>${escapeHtml(r.tipo_doc)}</td><td>${escapeHtml(r.factura_asociada || '—')}</td><td>${escapeHtml(r.tipo_pago)}</td><td>${formatMoney(r.monto)}</td><td>${escapeHtml(r.estado)}</td></tr>`
+      ).join('');
+    }
+
+    function renderPagosDetalle(detalle) {
+      const section = document.querySelector('#pagosDetalleSection');
+      if (!detalle || !detalle.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const tbody = document.querySelector('#pagosDetalleRows');
+      if (tbody) tbody.innerHTML = detalle.map((r) => {
+        const nc = r.nc_aplicada ? '<span style="background:#e7f3f3;color:#276f86;border-radius:4px;padding:1px 6px;font-size:.8rem;font-weight:700">NC</span>' : '';
+        return `<tr><td>${escapeHtml(r.proveedor)}</td><td>${escapeHtml(r.numero_factura)}</td><td>${escapeHtml(r.fecha_pago)}</td><td>${escapeHtml(r.tipo_pago)}</td><td>${formatMoney(r.monto)}</td><td>${nc}</td></tr>`;
+      }).join('');
+    }
+
+    function renderPagosProveedores(body) {
+      const kpis = body.kpis || {};
+      const pagosKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
+      const cards = [];
+      cards.push(`<article class="kpi-card primary"><h2>Total pagado a proveedores</h2>${metric('Pagos FC + NC/Anticipos', formatMoney(kpis.monto_total), body.periodo)}${delta('Pagos de facturas', formatMoney(kpis.monto_fc))}${delta('Notas / Anticipos', formatMoney(kpis.monto_nc))}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Pagos en el periodo</h2>${metric('Facturas pagadas', formatNumber(kpis.n_pagados))}${delta('NC / Anticipos', formatNumber(kpis.n_nc))}</article>`);
+      const pendStyle = kpis.n_pendientes > 0 ? 'warning' : 'accent';
+      cards.push(`<article class="kpi-card ${pendStyle}"><h2>Pagos pendientes</h2>${metric(kpis.n_pendientes > 0 ? 'Sin liquidar' : 'Sin pendientes', formatNumber(kpis.n_pendientes))}</article>`);
+      const pctDef = kpis.pct_por_definir ? (kpis.pct_por_definir * 100).toFixed(1) + '%' : '0%';
+      const defStyle = kpis.n_por_definir > 0 ? 'warning' : 'accent';
+      cards.push(`<article class="kpi-card ${defStyle}"><h2>Tipo de pago no definido</h2>${metric('Sin tipo asignado', formatNumber(kpis.n_por_definir))}${delta('% del total pagado', pctDef)}</article>`);
+      if (pagosKpiGrid) pagosKpiGrid.innerHTML = cards.join('');
+      renderPagosTemporal(body.series?.temporal);
+      renderPagosTipoPago(body.series?.tipo_pago || []);
+      const topProvSection = document.querySelector('#pagosTopProveedoresSection');
+      if (body.tables?.top_proveedores?.length) {
+        if (topProvSection) topProvSection.hidden = false;
+        renderTopChart(document.querySelector('#pagosTopProveedoresChart'), document.querySelector('#pagosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor)}</strong><br>${formatMoney(d.m)}<br>${d.n} pago(s)` });
+      } else { if (topProvSection) topProvSection.hidden = true; }
+      renderPagosNotas(body.tables?.notas_anticipos || []);
+      renderPagosDetalle(body.tables?.pagos_detalle || []);
+    }
+
+    async function loadPagosProveedores() {
+      if (pagosProveedoresLoaded) return;
+      const kpiGrid2 = document.querySelector('#pagosProveedoresKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/pagos_proveedores');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de pagos a proveedores.');
+        renderPagosProveedores(body);
+        pagosProveedoresLoaded = true;
+      } catch (error) {
+        if (kpiGrid2) kpiGrid2.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    // ── MÓDULO GASTOS OPERATIVOS ──────────────────────────────────────────────
+    const GASTOS_CAT_COLORS = ['#276f86','#d0b56b','#d96058','#57c5b6','#8a6f35','#159895','#5b6673','#1d5368','#c6ad6a','#225e73'];
+
+    function renderGastosCategoriaPie(activeIndex = null) {
+      const canvas2 = document.querySelector('#gastosCategoriaPie');
+      if (!canvas2 || !gastosCategoriaChart.slices.length) return;
+      const ctx = canvas2.getContext('2d');
+      resizeCanvasToDisplay(canvas2, ctx);
+      const W = canvas2.width, H = canvas2.height;
+      const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 8, ri = r * 0.52;
+      ctx.clearRect(0, 0, W, H);
+      gastosCategoriaChart.slices.forEach((s, i) => {
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, s.start, s.end);
+        ctx.closePath();
+        ctx.fillStyle = i === activeIndex ? GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length] + 'cc' : GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length];
+        ctx.fill();
+        if (i === activeIndex) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      const center = document.querySelector('#gastosCategoriaPieCenter');
+      if (center) {
+        if (activeIndex !== null && gastosCategoriaChart.slices[activeIndex]) {
+          const s = gastosCategoriaChart.slices[activeIndex];
+          center.innerHTML = `<strong>${s.pct}</strong><span>${escapeHtml(s.label)}</span>`;
+        } else { center.innerHTML = '<strong>100%</strong><span>Monto</span>'; }
+      }
+    }
+
+    function gastosCategoriaSliceAtEvent(event) {
+      const canvas2 = document.querySelector('#gastosCategoriaPie');
+      const rect = canvas2.getBoundingClientRect();
+      const x = event.clientX - rect.left - canvas2.offsetWidth / 2;
+      const y = event.clientY - rect.top - canvas2.offsetHeight / 2;
+      let angle = Math.atan2(y, x); if (angle < -Math.PI / 2) angle += 2 * Math.PI;
+      return gastosCategoriaChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveGastosCategoria(index, event) {
+      gastosCategoriaChart.activeIndex = index >= 0 ? index : null;
+      renderGastosCategoriaPie(gastosCategoriaChart.activeIndex);
+      const legend = document.querySelector('#gastosCategoriaPieLegend');
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
+      const tbody = document.querySelector('#gastosCategoriaRows');
+      if (tbody) tbody.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
+      const tooltip = document.querySelector('#gastosCategoriaTooltip');
+      if (tooltip) {
+        if (index >= 0 && gastosCategoriaChart.slices[index]) {
+          const s = gastosCategoriaChart.slices[index];
+          tooltip.innerHTML = `<strong>${escapeHtml(s.label)}</strong><br>Monto: ${s.monto}<br>${s.pct}`;
+          tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
+        } else { tooltip.hidden = true; }
+      }
+    }
+
+    function renderGastosCategoria(categoria) {
+      const section = document.querySelector('#gastosCategoriaSection');
+      if (!categoria || !categoria.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const total = categoria.reduce((s, t) => s + (t.m || 0), 0);
+      const tbody = document.querySelector('#gastosCategoriaRows');
+      if (tbody) tbody.innerHTML = categoria.map((t, i) => {
+        const pct = total > 0 ? ((t.m / total) * 100).toFixed(1) : 0;
+        return `<tr><td style="color:${GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length]};font-weight:700">${escapeHtml(t.categoria)}</td><td>${t.n}</td><td>${formatMoney(t.m)}</td><td>${pct}%</td></tr>`;
+      }).join('');
+      let angle = -Math.PI / 2;
+      gastosCategoriaChart.slices = categoria.map((t, i) => {
+        const pct = total > 0 ? t.m / total : 0;
+        const sweep = pct * 2 * Math.PI;
+        const slice = { label: t.categoria, start: angle, end: angle + sweep, pct: (pct * 100).toFixed(1) + '%', n: t.n, monto: formatMoney(t.m) };
+        angle += sweep; return slice;
+      });
+      renderGastosCategoriaPie();
+      const legend = document.querySelector('#gastosCategoriaPieLegend');
+      if (legend) legend.innerHTML = categoria.map((t, i) => `<span class="legend-item" data-index="${i}"><span class="legend-swatch" style="background:${GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length]}"></span>${escapeHtml(t.categoria)}</span>`).join('');
+      const pie = document.querySelector('#gastosCategoriaPie');
+      const tooltip = document.querySelector('#gastosCategoriaTooltip');
+      if (pie) {
+        pie.addEventListener('mousemove', (e) => setActiveGastosCategoria(gastosCategoriaSliceAtEvent(e), e));
+        pie.addEventListener('mouseleave', () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; });
+      }
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => {
+        item.addEventListener('mouseenter', (e) => setActiveGastosCategoria(i, e));
+        item.addEventListener('mouseleave', () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; });
+      });
+    }
+
+    function drawGastosTemporalChart(activeIndex = null) {
+      const canvas2 = document.querySelector('#gastosTemporalChart');
+      if (!canvas2 || !gastosTemporalState.rows.length) return;
+      const ctx = canvas2.getContext('2d');
+      resizeCanvasToDisplay(canvas2, ctx);
+      const W = canvas2.width, H = canvas2.height, pad = { t: 20, r: 20, b: 40, l: 70 };
+      const rows = gastosTemporalState.rows;
+      const vista = gastosTemporalState.vista;
+      const vals = rows.map((r) => vista === 'monto' ? (r.monto || 0) : (r.gastos || 0));
+      const maxV = Math.max(...vals, 1);
+      const barW = Math.max(4, ((W - pad.l - pad.r) / rows.length) * 0.6);
+      const step = (W - pad.l - pad.r) / rows.length;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, H);
+      rows.forEach((row, i) => {
+        const val = vals[i];
+        const x = pad.l + i * step + step / 2;
+        const barH = (val / maxV) * (H - pad.t - pad.b);
+        const y = H - pad.b - barH;
+        const color = i === activeIndex ? '#d0b56b' : '#276f86';
+        ctx.fillStyle = color; drawRoundRect(ctx, x - barW / 2, y, barW, barH, 3); ctx.fill();
+        ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(row.etiqueta, x, H - pad.b + 14);
+      });
+      ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+      [0, 0.5, 1].forEach((f) => {
+        const y = H - pad.b - f * (H - pad.t - pad.b);
+        const v = f * maxV;
+        ctx.fillText(vista === 'monto' ? formatMoney(v) : Math.round(v), pad.l - 6, y + 4);
+      });
+      gastosTemporalState.points = rows.map((_, i) => pad.l + i * step + step / 2);
+    }
+
+    function renderGastosTemporal(temporal) {
+      const section = document.querySelector('#gastosTemporalSection');
+      if (!temporal || !temporal.periodos) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const heading = document.querySelector('#gastosTemporalHeading');
+      const title = document.querySelector('#gastosTemporalTitle');
+      const subtitle = document.querySelector('#gastosTemporalSubtitle');
+      if (heading) heading.textContent = temporal.table_heading || 'Per.';
+      if (title) title.textContent = temporal.behavior_title || 'Comportamiento temporal';
+      if (subtitle) subtitle.textContent = temporal.hint || '';
+      const tbody = document.querySelector('#gastosTemporalRows');
+      if (tbody) tbody.innerHTML = temporal.periodos.map((p) =>
+        `<tr><td>${escapeHtml(p.etiqueta)}</td><td>${p.gastos || 0}</td><td>${formatMoney(p.monto || 0)}</td></tr>`
+      ).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+      gastosTemporalState.rows = temporal.periodos;
+      drawGastosTemporalChart();
+      const chart = document.querySelector('#gastosTemporalChart');
+      const tooltip = document.querySelector('#gastosTemporalTooltip');
+      if (chart) {
+        chart.addEventListener('mousemove', (e) => {
+          const rect = chart.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          let closest = -1, minD = Infinity;
+          gastosTemporalState.points.forEach((px, i) => { const d = Math.abs(px - mx); if (d < minD) { minD = d; closest = i; }});
+          if (closest >= 0) {
+            drawGastosTemporalChart(closest);
+            const p = gastosTemporalState.rows[closest];
+            if (tooltip) { tooltip.innerHTML = `<strong>${escapeHtml(p.etiqueta)}</strong><br>Gastos: ${p.gastos || 0}<br>Monto: ${formatMoney(p.monto || 0)}`; tooltip.hidden = false; placeTooltipNear(tooltip, e.clientX, e.clientY); }
+          }
+        });
+        chart.addEventListener('mouseleave', () => { drawGastosTemporalChart(); if (tooltip) tooltip.hidden = true; });
+      }
+      const btnMonto = document.querySelector('#gastosTemporalVistaMonto');
+      const btnCant = document.querySelector('#gastosTemporalVistaCantidad');
+      if (btnMonto) btnMonto.addEventListener('click', () => { gastosTemporalState.vista = 'monto'; btnMonto.classList.add('active'); if (btnCant) btnCant.classList.remove('active'); drawGastosTemporalChart(); });
+      if (btnCant) btnCant.addEventListener('click', () => { gastosTemporalState.vista = 'cantidad'; btnCant.classList.add('active'); if (btnMonto) btnMonto.classList.remove('active'); drawGastosTemporalChart(); });
+    }
+
+    function renderGastosFiscal(tablas, kpis) {
+      const section = document.querySelector('#gastosFiscalSection');
+      if (!tablas || !tablas.deducibles_split) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const cards = document.querySelector('#gastosFiscalCards');
+      if (cards) {
+        const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
+        cards.innerHTML = [
+          `<div class="tiempos-kpi" style="border-left-color:#276f86"><span class="kpi-label">Deducible (${pctDed})</span><span class="kpi-value">${formatMoney(kpis.monto_deducible || 0)}</span><span class="kpi-note">IVA acreditable ${formatMoney(kpis.iva_acreditable || 0)}</span></div>`,
+          `<div class="tiempos-kpi" style="border-left-color:#d96058"><span class="kpi-label">No deducible</span><span class="kpi-value">${formatMoney(kpis.monto_no_deducible || 0)}</span><span class="kpi-note">IVA no acreditable ${formatMoney(kpis.iva_no_acreditable || 0)}</span></div>`,
+        ].join('');
+      }
+      const tbody = document.querySelector('#gastosFiscalRows');
+      if (tbody) tbody.innerHTML = tablas.deducibles_split.map((r) =>
+        `<tr><td>${escapeHtml(r.tipo)}</td><td>${r.n}</td><td>${formatMoney(r.m)}</td><td>${formatMoney(r.iva)}</td></tr>`
+      ).join('');
+    }
+
+    function renderGastosDetalle(detalle) {
+      const section = document.querySelector('#gastosDetalleSection');
+      if (!detalle || !detalle.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const tbody = document.querySelector('#gastosDetalleRows');
+      if (tbody) tbody.innerHTML = detalle.map((r) => {
+        const badge = r.deducible ? '<span style="background:#e7f3f3;color:#276f86;border-radius:4px;padding:1px 6px;font-size:.8rem;font-weight:700">✓</span>' : '';
+        return `<tr><td>${escapeHtml(r.nombre)}</td><td>${escapeHtml(r.categoria)}</td><td>${escapeHtml(r.proveedor || '—')}</td><td>${escapeHtml(r.fecha)}</td><td>${escapeHtml(r.tarjeta)}</td><td>${formatMoney(r.total)}</td><td>${badge}</td></tr>`;
+      }).join('');
+    }
+
+    function renderGastosOperativos(body) {
+      const kpis = body.kpis || {};
+      const gastosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
+      const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
+      const cards = [];
+      cards.push(`<article class="kpi-card primary"><h2>Total gastos operativos</h2>${metric('Total con IVA', formatMoney(kpis.total_total))}${delta('Subtotal', formatMoney(kpis.total_subtotal))}${delta('IVA', formatMoney(kpis.total_iva))}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>IVA acreditable</h2>${metric('Solo gastos deducibles', formatMoney(kpis.iva_acreditable))}${delta('IVA no acreditable', formatMoney(kpis.iva_no_acreditable))}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Deducibles vs No Deducibles</h2>${metric('Deducible (' + pctDed + ')', formatMoney(kpis.monto_deducible))}${delta('No Deducible', formatMoney(kpis.monto_no_deducible))}</article>`);
+      const rechStyle = kpis.n_rechazados > 0 ? 'warning' : 'accent';
+      cards.push(`<article class="kpi-card ${rechStyle}"><h2>Gastos del periodo</h2>${metric('Realizados', formatNumber(kpis.n_gastos))}${delta(kpis.n_rechazados > 0 ? 'Rechazados' : 'Sin rechazados', formatNumber(kpis.n_rechazados))}</article>`);
+      if (gastosKpiGrid) gastosKpiGrid.innerHTML = cards.join('');
+      renderGastosTemporal(body.series?.temporal);
+      renderGastosCategoria(body.series?.categoria || []);
+      const topProvSection = document.querySelector('#gastosTopProveedoresSection');
+      if (body.tables?.top_proveedores?.length) {
+        if (topProvSection) topProvSection.hidden = false;
+        renderTopChart(document.querySelector('#gastosTopProveedoresChart'), document.querySelector('#gastosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor || '—')}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
+      } else { if (topProvSection) topProvSection.hidden = true; }
+      const tarSection = document.querySelector('#gastosTarjetaSection');
+      if (body.series?.tarjeta?.length) {
+        if (tarSection) tarSection.hidden = false;
+        renderTopChart(document.querySelector('#gastosTarjetaChart'), document.querySelector('#gastosTarjetaTooltip'), body.series.tarjeta, { barField: 'm', labelField: 'tarjeta', color: '#159895', tooltipFn: (d) => `<strong>Tarjeta ${escapeHtml(d.tarjeta)}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
+      } else { if (tarSection) tarSection.hidden = true; }
+      renderGastosFiscal(body.tables, kpis);
+      renderGastosDetalle(body.tables?.gastos_detalle || []);
+    }
+
+    async function loadGastosOperativos() {
+      if (gastosOperativosLoaded) return;
+      const kpiGrid2 = document.querySelector('#gastosOperativosKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/gastos_operativos');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de gastos operativos.');
+        renderGastosOperativos(body);
+        gastosOperativosLoaded = true;
+      } catch (error) {
+        if (kpiGrid2) kpiGrid2.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     function setActiveModule(moduleName) {
       canvas.dataset.module = moduleName;
       ventasPanel.hidden = moduleName !== 'ventas';
       facturacionPanel.hidden = moduleName !== 'facturacion';
       comprasPanel.hidden = moduleName !== 'compras';
       cobranzaPanel.hidden = moduleName !== 'cobranza';
+      pagosProveedoresPanel.hidden = moduleName !== 'pagos_proveedores';
+      gastosOperativosPanel.hidden = moduleName !== 'gastos_operativos';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
       if (moduleName === 'compras') loadCompras();
       if (moduleName === 'cobranza') loadCobranza();
+      if (moduleName === 'pagos_proveedores') loadPagosProveedores();
+      if (moduleName === 'gastos_operativos') loadGastosOperativos();
     }
 
     form.addEventListener('input', refreshPayload);
@@ -4711,6 +5449,24 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/pagos_proveedores")
+    def dashboard_pagos_proveedores(request: Request) -> dict:
+        try:
+            return load_pagos_proveedores_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/dashboard/gastos_operativos")
+    def dashboard_gastos_operativos(request: Request) -> dict:
+        try:
+            return load_gastos_operativos_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/actualizar-datos", status_code=status.HTTP_202_ACCEPTED)
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
         try:
@@ -4753,6 +5509,24 @@ def create_app(
                 pass
             try:
                 publish_cobranza_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_pagos_proveedores_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_gastos_operativos_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     payload.fecha_desde,
@@ -4814,6 +5588,24 @@ def create_app(
                 pass
             try:
                 publish_cobranza_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_pagos_proveedores_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_gastos_operativos_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     fecha_desde,

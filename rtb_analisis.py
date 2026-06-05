@@ -1317,6 +1317,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     n_pendientes_cobro = 0
     monto_pendiente_cobro = 0.0
     tabla_pendientes = []
+    top_clientes_pendientes = []
     pendientes_temporal = None
 
     if cotizaciones:
@@ -1344,6 +1345,17 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
             [_norm_pend(r) for r in pendientes_cot],
             key=lambda x: -x["monto"],
         )[:20]
+
+        # Top 10 clientes por monto pendiente
+        _cli_pend = defaultdict(lambda: {"n": 0, "m": 0.0})
+        for r in pendientes_cot:
+            c = (r.get("Cliente") or "").strip() or "(sin cliente)"
+            _cli_pend[c]["n"] += 1
+            _cli_pend[c]["m"] += f(r.get("Total", 0))
+        top_clientes_pendientes = [
+            {"cliente": c, "n": v["n"], "m": round(v["m"], 2)}
+            for c, v in sorted(_cli_pend.items(), key=lambda x: -x[1]["m"])[:10]
+        ]
 
         # Serie temporal de pendientes por Fecha_aprobacion
         # Detectar rango automáticamente para mostrar distribución de antigüedad
@@ -1474,8 +1486,454 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
         },
         "tables": {
             "top_clientes": top_clientes,
+            "top_clientes_pendientes": top_clientes_pendientes,
             "cobros": tabla_cobros,
             "pendientes": tabla_pendientes,
+        },
+        "signals": signals,
+    }
+
+
+# ─── Módulo Pagos a Proveedores ─────────────────────────────────────────────
+_RE_PAGOS_FC = re.compile(r"^Pagos_Facturas_Compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_NOTAS_CREDITO = re.compile(r"^Pago_Facturas_Nostas_Credito_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+
+def _find_csv_with_fallback(root_dir, compiled_re, glob_prefix):
+    from pathlib import Path
+    root = Path(root_dir)
+    matches = [p for p in root.glob(f"{glob_prefix}*.csv") if p.is_file() and compiled_re.match(p.name)]
+    if not matches:
+        archive = root.parent / "data_procesada"
+        if archive.is_dir():
+            matches = [p for p in archive.rglob(f"{glob_prefix}*.csv") if compiled_re.match(p.name)]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
+
+def find_latest_pagos_proveedores_csvs(data_dir="data"):
+    p_fc = _find_csv_with_fallback(data_dir, _RE_PAGOS_FC, "Pagos_Facturas_Compras_")
+    p_nc = _find_csv_with_fallback(data_dir, _RE_NOTAS_CREDITO, "Pago_Facturas_Nostas_Credito_")
+    if p_fc is None:
+        raise FileNotFoundError(f"No se encontró Pagos_Facturas_Compras_*.csv en {data_dir} ni en data_procesada/")
+    return p_fc, p_nc  # p_nc puede ser None si no existe aún
+
+
+_RE_GASTOS_OP = re.compile(r"^Gastos_Operativos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+
+def find_latest_gastos_operativos_csv(data_dir="data"):
+    p = _find_csv_with_fallback(data_dir, _RE_GASTOS_OP, "Gastos_Operativos_")
+    if p is None:
+        raise FileNotFoundError(f"No se encontró Gastos_Operativos_*.csv en {data_dir} ni en data_procesada/")
+    return p
+
+
+# Normalización del tipo de pago de Pagos_Facturas_Compras
+_TP_MAP = {
+    "1": "Efectivo",
+    "3": "Transferencia",
+    "28": "Tarjeta de débito",
+    "99": "Por definir",
+}
+
+def _normalizar_tipo_pago_fc(raw):
+    raw = (raw or "").strip()
+    code = raw.split()[0] if raw else ""
+    return _TP_MAP.get(code, raw or "Sin tipo")
+
+
+def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    # Construir lista de IDs de notas de crédito para cruce
+    nc_ids = {str(r.get("Pago_Facturas_Nostas_Credito_id", "")).strip() for r in (notas_credito or [])}
+
+    def _norm_pago(r):
+        tp_raw = (r.get("Pagos_Facturas_Compras_tipo_pago") or "").strip()
+        nc_raw = (r.get("Pagos_Facturas_Compras_nota_credito") or "[]").strip()
+        try:
+            nc_list = json.loads(nc_raw) if nc_raw.startswith("[") else []
+        except Exception:
+            nc_list = []
+        return {
+            "id": (r.get("Pagos_Facturas_Compras_id") or "").strip(),
+            "nombre": (r.get("Pagos_Facturas_Compras_nombre") or "").strip(),
+            "fecha_pago": parse_date(r.get("Pagos_Facturas_Compras_fecha_pago")),
+            "numero_factura": (r.get("Pagos_Facturas_Compras_numero_factura") or "").strip(),
+            "tipo_compra": (r.get("Pagos_Facturas_Compras_tipo_compra") or "").strip() or "Sin clasificar",
+            "tipo_pago": _normalizar_tipo_pago_fc(tp_raw),
+            "tipo_pago_raw": tp_raw,
+            "estatus": (r.get("Pagos_Facturas_Compras_estatus_pago") or "").strip(),
+            "nc_list": nc_list,
+            "monto": round(f(r.get("Pagos_Facturas_Compras_cantidad_pagada")), 2),
+            "proveedor": (r.get("Pagos_Facturas_Compras_Nombre_proveedor") or "").strip(),
+            "proveedor_id": (r.get("Pagos_Facturas_Compras_id_provedor") or "").strip(),
+        }
+
+    def _norm_nc(r):
+        return {
+            "id": (r.get("Pago_Facturas_Nostas_Credito_id") or "").strip(),
+            "nombre": (r.get("Pago_Facturas_Nostas_Credito_nombre") or "").strip(),
+            "proveedor": str(r.get("Pago_Facturas_Nostas_Credito_proveedor_nombre") or "").strip().strip("[]\"'"),
+            "proveedor_id": (r.get("Pago_Facturas_Nostas_Credito_proveedor_siglas") or "").strip(),
+            "numero_doc": (r.get("Pago_Facturas_Nostas_Credito_numero_documento") or "").strip(),
+            "tipo_doc": (r.get("Pago_Facturas_Nostas_Credito_tipo_documeto") or "").strip(),
+            "tipo_pago": (r.get("Pago_Facturas_Nostas_Credito_tipo_pago") or "").strip(),
+            "factura_asociada": (r.get("Pago_Facturas_Nostas_Credito_factura_asociada") or "").strip(),
+            "monto": round(f(r.get("Pago_Facturas_Nostas_Credito_total_pagado")), 2),
+            "estado": (r.get("Pago_Facturas_Nostas_Credito_estado_pago") or "").strip(),
+            "fecha_pago": parse_date(r.get("Pago_Facturas_Nostas_Credito_fecha_pago")),
+        }
+
+    pagos_norm = [_norm_pago(r) for r in (pagos_fc or [])]
+    nc_norm = [_norm_nc(r) for r in (notas_credito or [])]
+
+    pagos_periodo = [r for r in pagos_norm if in_period(r["fecha_pago"])]
+    pagos_pagados = [r for r in pagos_periodo if r["estatus"] == "Pagado"]
+    pagos_pendientes = [r for r in pagos_periodo if r["estatus"] != "Pagado"]
+
+    monto_fc = round(sum(r["monto"] for r in pagos_pagados), 2)
+    monto_nc = round(sum(r["monto"] for r in nc_norm), 2)
+    monto_total = round(monto_fc + monto_nc, 2)
+
+    n_pagados = len(pagos_pagados)
+    n_pendientes = len(pagos_pendientes)
+    n_nc = len(nc_norm)
+
+    # Distribución tipo de pago
+    tp_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in pagos_pagados:
+        tp = r["tipo_pago"]
+        tp_data[tp]["n"] += 1
+        tp_data[tp]["m"] += r["monto"]
+
+    n_por_definir = sum(1 for r in pagos_pagados if r["tipo_pago"] == "Por definir")
+    pct_por_definir = round(n_por_definir / n_pagados, 4) if n_pagados else 0.0
+
+    # Top proveedores (por monto absoluto, ya que algunos montos son negativos por NC)
+    prov_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in pagos_pagados:
+        p = r["proveedor"] or "(sin proveedor)"
+        prov_data[p]["n"] += 1
+        prov_data[p]["m"] += r["monto"]
+    top_proveedores = [
+        {"proveedor": k, "n": v["n"], "m": round(v["m"], 2)}
+        for k, v in sorted(prov_data.items(), key=lambda x: -x[1]["m"])[:15]
+    ]
+
+    # Serie temporal
+    def _fp(row):
+        return row["fecha_pago"].isoformat() if row["fecha_pago"] else ""
+
+    temporal = aggregate_temporal(
+        pagos_pagados,
+        date_getter=_fp,
+        metric_getters={
+            "pagos": lambda row: 1,
+            "monto": lambda row: row["monto"],
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "pagos": linear_trend([p["pagos"] for p in periods]),
+        "monto": linear_trend([p["monto"] for p in periods]),
+    }
+
+    # Tabla de detalle
+    def _iso(dt):
+        return dt.date().isoformat() if dt else ""
+
+    tabla_pagos = sorted(
+        [
+            {
+                "id": r["id"],
+                "proveedor": r["proveedor"],
+                "numero_factura": r["numero_factura"],
+                "tipo_compra": r["tipo_compra"],
+                "tipo_pago": r["tipo_pago"],
+                "estatus": r["estatus"],
+                "monto": r["monto"],
+                "nc_aplicada": len(r["nc_list"]) > 0,
+                "fecha_pago": _iso(r["fecha_pago"]),
+            }
+            for r in pagos_pagados
+        ],
+        key=lambda x: -x["monto"],
+    )[:50]
+
+    # Señales
+    signals = []
+    if n_por_definir:
+        signals.append(make_signal(
+            "pago_tipo_por_definir", "atencion", "Pagos sin tipo de pago definido",
+            f"{n_por_definir} registro(s) con tipo de pago '99 por definir'. Completar en Notion.",
+            period_label,
+            {"cantidad": n_por_definir, "porcentaje": pct_por_definir},
+            [],
+            "Actualizar el tipo de pago en la base de datos de Notion.",
+        ))
+    if n_pendientes:
+        signals.append(make_signal(
+            "pago_pendiente", "riesgo", "Pagos registrados sin liquidar",
+            f"{n_pendientes} pago(s) con estatus 'No Pagado' en el periodo.",
+            period_label,
+            {"cantidad": n_pendientes, "monto": round(sum(r["monto"] for r in pagos_pendientes), 2)},
+            [{"nombre": r["nombre"], "monto": r["monto"]} for r in pagos_pendientes[:10]],
+            "Verificar y liquidar los pagos pendientes.",
+        ))
+    nc_aplicadas = [r for r in pagos_pagados if len(r["nc_list"]) > 0]
+    if nc_aplicadas:
+        signals.append(make_signal(
+            "nc_aplicada", "info", "Notas de crédito aplicadas",
+            f"{len(nc_aplicadas)} factura(s) con nota de crédito aplicada en el periodo.",
+            period_label,
+            {"cantidad": len(nc_aplicadas)},
+            [],
+            "",
+        ))
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "monto_total": monto_total,
+            "monto_fc": monto_fc,
+            "monto_nc": monto_nc,
+            "n_pagados": n_pagados,
+            "n_pendientes": n_pendientes,
+            "n_nc": n_nc,
+            "n_por_definir": n_por_definir,
+            "pct_por_definir": pct_por_definir,
+            "senales": len(signals),
+        },
+        "series": {
+            "temporal": temporal,
+            "tipo_pago": [{"tipo": k, **v} for k, v in sorted(tp_data.items(), key=lambda x: -x[1]["m"])],
+        },
+        "tables": {
+            "top_proveedores": top_proveedores,
+            "pagos_detalle": tabla_pagos,
+            "notas_anticipos": [
+                {
+                    "nombre": r["nombre"],
+                    "proveedor": r["proveedor"],
+                    "tipo_doc": r["tipo_doc"],
+                    "numero_doc": r["numero_doc"],
+                    "tipo_pago": r["tipo_pago"],
+                    "factura_asociada": r["factura_asociada"],
+                    "monto": r["monto"],
+                    "estado": r["estado"],
+                    "fecha_pago": _iso(r["fecha_pago"]),
+                }
+                for r in nc_norm
+            ],
+        },
+        "signals": signals,
+    }
+
+
+# ─── Módulo Gastos Operativos ────────────────────────────────────────────────
+def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    def _norm_gasto(r):
+        return {
+            "id": (r.get("Gasto Operativo id") or "").strip(),
+            "nombre": (r.get("Gasto Operativo name") or "").strip(),
+            "subtotal": round(f(r.get("Gasto Operativo Subtotal")), 2),
+            "iva": round(f(r.get("Gasto Operativo Iva")), 2),
+            "total": round(f(r.get("Gasto Operativo Total")), 2),
+            "fecha": parse_date(r.get("Gasto Operativo Fecha ")),  # nota: campo tiene espacio al final
+            "estado": (r.get("Gasto Operativo Estado") or "").strip(),
+            "factura": (r.get("Gasto Operativo Factura") or "").strip(),
+            "proveedor": (r.get("Gasto Operativo Proveedor Nombre") or "").strip(),
+            "proveedor_id": (r.get("Gasto Operativo Proveedor ID") or "").strip(),
+            "tipo_pago": (r.get("Gasto Operativo Tipo de Pago") or "").strip(),
+            "categoria": (r.get("Gasto Operativo Categoria") or "").strip() or "Sin categoría",
+            "tarjeta": (r.get("Gasto Operativo Tarjeta ") or "").strip() or "Sin tarjeta",  # campo tiene espacio
+            "deducible": str(r.get("Gasto Operativo Deducible") or "").strip().upper() == "TRUE",
+        }
+
+    gastos_norm = [_norm_gasto(r) for r in (rows or [])]
+    realizados = [r for r in gastos_norm if r["estado"] == "Realizado"]
+    rechazados = [r for r in gastos_norm if r["estado"] == "Rechazado"]
+    periodo = [r for r in realizados if in_period(r["fecha"])]
+
+    total_subtotal = round(sum(r["subtotal"] for r in periodo), 2)
+    total_iva = round(sum(r["iva"] for r in periodo), 2)
+    total_total = round(sum(r["total"] for r in periodo), 2)
+
+    deducibles = [r for r in periodo if r["deducible"]]
+    no_deducibles = [r for r in periodo if not r["deducible"]]
+
+    monto_deducible = round(sum(r["total"] for r in deducibles), 2)
+    monto_no_deducible = round(sum(r["total"] for r in no_deducibles), 2)
+    iva_acreditable = round(sum(r["iva"] for r in deducibles), 2)
+    iva_no_acreditable = round(sum(r["iva"] for r in no_deducibles), 2)
+
+    pct_deducible = round(monto_deducible / total_total, 4) if total_total else 0.0
+
+    n_rechazados = len(rechazados)
+    monto_rechazado = round(sum(r["total"] for r in rechazados), 2)
+
+    # Distribución por categoría
+    cat_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in periodo:
+        cat_data[r["categoria"]]["n"] += 1
+        cat_data[r["categoria"]]["m"] += r["total"]
+    series_categoria = [
+        {"categoria": k, "n": v["n"], "m": round(v["m"], 2)}
+        for k, v in sorted(cat_data.items(), key=lambda x: -x[1]["m"])
+    ]
+
+    # Distribución por tarjeta
+    tar_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in periodo:
+        tar_data[r["tarjeta"]]["n"] += 1
+        tar_data[r["tarjeta"]]["m"] += r["total"]
+    series_tarjeta = [
+        {"tarjeta": k, "n": v["n"], "m": round(v["m"], 2)}
+        for k, v in sorted(tar_data.items(), key=lambda x: -x[1]["m"])
+    ]
+
+    # Top proveedores
+    prov_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in periodo:
+        p = r["proveedor"] or "(sin proveedor)"
+        prov_data[p]["n"] += 1
+        prov_data[p]["m"] += r["total"]
+    top_proveedores = [
+        {"proveedor": k, "n": v["n"], "m": round(v["m"], 2)}
+        for k, v in sorted(prov_data.items(), key=lambda x: -x[1]["m"])[:15]
+    ]
+
+    # Serie temporal
+    def _fg(row):
+        return row["fecha"].isoformat() if row["fecha"] else ""
+
+    temporal = aggregate_temporal(
+        periodo,
+        date_getter=_fg,
+        metric_getters={
+            "gastos": lambda row: 1,
+            "monto": lambda row: row["total"],
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "gastos": linear_trend([p["gastos"] for p in periods]),
+        "monto": linear_trend([p["monto"] for p in periods]),
+    }
+
+    # Tabla detalle
+    def _iso(dt):
+        return dt.date().isoformat() if dt else ""
+
+    tabla_gastos = sorted(
+        [
+            {
+                "nombre": r["nombre"],
+                "categoria": r["categoria"],
+                "proveedor": r["proveedor"],
+                "tipo_pago": r["tipo_pago"],
+                "tarjeta": r["tarjeta"],
+                "subtotal": r["subtotal"],
+                "iva": r["iva"],
+                "total": r["total"],
+                "deducible": r["deducible"],
+                "factura": r["factura"],
+                "estado": r["estado"],
+                "fecha": _iso(r["fecha"]),
+            }
+            for r in periodo
+        ],
+        key=lambda x: -x["total"],
+    )[:50]
+
+    # Señales
+    signals = []
+    n_sin_factura = sum(1 for r in periodo if not r["factura"])
+    n_sin_proveedor = sum(1 for r in periodo if not r["proveedor"])
+    monto_sin_factura = round(sum(r["total"] for r in periodo if not r["factura"]), 2)
+
+    if n_rechazados:
+        signals.append(make_signal(
+            "gasto_rechazado", "riesgo", "Gastos rechazados",
+            f"{n_rechazados} gasto(s) con estado 'Rechazado' (no incluidos en totales).",
+            period_label,
+            {"cantidad": n_rechazados, "monto": monto_rechazado},
+            [{"nombre": r["nombre"], "total": r["total"]} for r in rechazados[:10]],
+            "Verificar si deben eliminarse o corregirse en Notion.",
+        ))
+    if n_sin_factura:
+        signals.append(make_signal(
+            "gasto_sin_factura", "info", "Gastos sin número de factura",
+            f"{n_sin_factura} gasto(s) sin número de factura capturado (monto total: ${monto_sin_factura:,.2f}).",
+            period_label,
+            {"cantidad": n_sin_factura, "monto": monto_sin_factura},
+            [],
+            "Común en efectivo / pasajes, pero verificar que estén respaldados.",
+        ))
+    if n_sin_proveedor:
+        signals.append(make_signal(
+            "gasto_sin_proveedor", "info", "Gastos sin proveedor",
+            f"{n_sin_proveedor} gasto(s) sin proveedor capturado.",
+            period_label,
+            {"cantidad": n_sin_proveedor},
+            [],
+            "Completar el proveedor en Notion para mejorar la trazabilidad.",
+        ))
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "total_subtotal": total_subtotal,
+            "total_iva": total_iva,
+            "total_total": total_total,
+            "iva_acreditable": iva_acreditable,
+            "iva_no_acreditable": iva_no_acreditable,
+            "monto_deducible": monto_deducible,
+            "monto_no_deducible": monto_no_deducible,
+            "pct_deducible": pct_deducible,
+            "n_gastos": len(periodo),
+            "n_deducibles": len(deducibles),
+            "n_no_deducibles": len(no_deducibles),
+            "n_rechazados": n_rechazados,
+            "monto_rechazado": monto_rechazado,
+            "n_sin_factura": n_sin_factura,
+            "n_sin_proveedor": n_sin_proveedor,
+            "senales": len(signals),
+        },
+        "series": {
+            "temporal": temporal,
+            "categoria": series_categoria,
+            "tarjeta": series_tarjeta,
+        },
+        "tables": {
+            "top_proveedores": top_proveedores,
+            "gastos_detalle": tabla_gastos,
+            "deducibles_split": [
+                {"tipo": "Deducible", "n": len(deducibles), "m": monto_deducible, "iva": iva_acreditable},
+                {"tipo": "No deducible", "n": len(no_deducibles), "m": monto_no_deducible, "iva": iva_no_acreditable},
+            ],
         },
         "signals": signals,
     }

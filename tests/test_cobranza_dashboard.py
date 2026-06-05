@@ -382,6 +382,48 @@ class TestPendientesCobro(unittest.TestCase):
         # cot-A está pagada (aunque el cobro esté fuera de periodo), cot-B pendiente
         self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
 
+    def test_top_clientes_pendientes_presente(self):
+        r = self._build_with_cots([], ["cot-A", "cot-B"])
+        self.assertIn("top_clientes_pendientes", r["tables"])
+        self.assertIsInstance(r["tables"]["top_clientes_pendientes"], list)
+
+    def test_top_clientes_pendientes_agrega_por_cliente(self):
+        pp = []
+        cots = [
+            _cot(**{"Cotizacion_id": "cot-1", "Cliente": "ACME", "Total": "3000"}),
+            _cot(**{"Cotizacion_id": "cot-2", "Cliente": "ACME", "Total": "7000"}),
+            _cot(**{"Cotizacion_id": "cot-3", "Cliente": "BETA", "Total": "1000"}),
+        ]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        top = {d["cliente"]: d for d in r["tables"]["top_clientes_pendientes"]}
+        self.assertAlmostEqual(top["ACME"]["m"], 10000.0, places=2)
+        self.assertEqual(top["ACME"]["n"], 2)
+        self.assertAlmostEqual(top["BETA"]["m"], 1000.0, places=2)
+
+    def test_top_clientes_pendientes_orden_monto_desc(self):
+        pp = []
+        cots = [
+            _cot(**{"Cotizacion_id": "cot-1", "Cliente": "C1", "Total": "500"}),
+            _cot(**{"Cotizacion_id": "cot-2", "Cliente": "C2", "Total": "9000"}),
+            _cot(**{"Cotizacion_id": "cot-3", "Cliente": "C3", "Total": "3000"}),
+        ]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        montos = [d["m"] for d in r["tables"]["top_clientes_pendientes"]]
+        self.assertEqual(montos, sorted(montos, reverse=True))
+
+    def test_top_clientes_pendientes_trunca_a_10(self):
+        pp = []
+        cots = [
+            _cot(**{"Cotizacion_id": f"cot-{i}", "Cliente": f"CLI_{i}", "Total": str(1000 + i)})
+            for i in range(15)
+        ]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        self.assertEqual(len(r["tables"]["top_clientes_pendientes"]), 10)
+
+    def test_top_clientes_pendientes_vacio_sin_cotizaciones(self):
+        r = build_cobranza_dashboard([_pp()], [], **PERIODO)
+        self.assertEqual(r["tables"]["top_clientes_pendientes"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

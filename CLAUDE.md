@@ -85,6 +85,21 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/cobranza_latest.json`
 - Campo nuevo `Pedido Pago Cotizacion` (UUID): vincula cada cobro a su `Cotizacion_id` — 100 % poblado
 
+### Pagos a Proveedores (pagos de facturas de compra)
+- `Pagos_Facturas_Compras_YYYY-MM-DD_HH-MM.csv` — pagos de facturas de materiales. Regex: `^Pagos_Facturas_Compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Pago_Facturas_Nostas_Credito_YYYY-MM-DD_HH-MM.csv` — notas de crédito y anticipos. Regex: `^Pago_Facturas_Nostas_Credito_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$` (**"Nostas"** es el typo de n8n, igual que "Principlaes")
+- Selección: `find_latest_pagos_proveedores_csvs(data_dir)` en `rtb_analisis.py` usando `_find_csv_with_fallback()` (busca `data/` primero, luego `data_procesada/`). NC puede ser `None` si no existe el CSV.
+- Función: `build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label, fecha_desde, fecha_hasta)`
+- Snapshot: `dashboard_data/pagos_proveedores_latest.json`
+- Endpoint: `GET /api/dashboard/pagos_proveedores`
+
+### Gastos Operativos (gastos administrativos categorizados)
+- `Gastos_Operativos_YYYY-MM-DD_HH-MM.csv` — gastos con categoría, tarjeta, deducible/no deducible. Regex: `^Gastos_Operativos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- Selección: `find_latest_gastos_operativos_csv(data_dir)` en `rtb_analisis.py`
+- Función: `build_gastos_operativos_dashboard(rows, period_label, fecha_desde, fecha_hasta)`
+- Snapshot: `dashboard_data/gastos_operativos_latest.json`
+- Endpoint: `GET /api/dashboard/gastos_operativos`
+
 ---
 
 ## Reglas de negocio críticas
@@ -138,6 +153,23 @@ Cotizaciones aprobadas (`Estado_cotizacion == "Aprobada"`) cuyo `Cotizacion_id` 
 - `series.pendientes_temporal` = distribución por `Fecha_aprobacion` (rango auto-detectado).
 - `tables.pendientes` = top-20 por monto desc.
 
+### Pagos a Proveedores — reglas clave
+- `cantidad_pagada` puede ser **negativo o ~0** cuando hay nota de crédito aplicada. Se suma tal cual (los negativos restan — correcto contablemente).
+- `tipo_pago` viene con prefijo numérico (`"3 Tranferencia"`, `"28 Tarjeta de debito"`, `"99 por definir"`). Normalizar con `_normalizar_tipo_pago_fc()` usando `_TP_MAP = {"1":"Efectivo","3":"Transferencia","28":"Tarjeta de débito","99":"Por definir"}`.
+- **"Tranferencia"** (sic, sin 's') — respetar el typo del CSV en el código de matching.
+- `nota_credito` en `Pagos_Facturas_Compras` es lista JSON de UUIDs — si no está vacía, se emite señal `nc_aplicada`.
+- `estatus_pago = "No Pagado"` → se cuenta en `n_pendientes` y se emite `pago_pendiente`; **no suma** a `monto_fc`.
+- Cruce NC ↔ Factura: campo `nota_credito` apunta a UUIDs del CSV `Pago_Facturas_Nostas_Credito`.
+
+### Gastos Operativos — reglas clave
+- `Deducible` viene como string `"TRUE"` / `"FALSE"` (no booleano Python). Usar `.upper() == "TRUE"`.
+- `IVA acreditable` = suma de `Gasto Operativo Iva` donde `Deducible == "TRUE"` y `Estado == "Realizado"`.
+- `Total` se toma directamente del campo (`Subtotal + IVA` no siempre cierra exacto por redondeos en Notion).
+- `Estado = "Rechazado"` **no cuenta** en totales pero se reporta señal `gasto_rechazado`.
+- `Gasto Operativo Tarjeta ` y `Gasto Operativo Fecha ` tienen **espacio al final del nombre** — respetar en `.get()`.
+- `Tarjeta` vacía → grupo `"Sin tarjeta"` en la agrupación por tarjeta.
+- `Categoria` vacía → grupo `"Sin categoría"`.
+
 ---
 
 ## Granularidad temporal
@@ -166,6 +198,10 @@ Comparar fechas siempre con `.date()` para ignorar hora (evita corte de registro
 | Facturación muestra 3 facturas / $180k aunque CSV tiene 273 filas | `Facturas_Anticipo_*.csv` seleccionado como "principales" por tener mtime mayor | Ya corregido con allowlist regex en `find_latest_facturacion_csv`; si reaparece, verificar que la función no fue revertida a denylist |
 | Cobranza: `n_pendientes_cobro = 0` aunque hay cotizaciones aprobadas | `data/` vacío → `load_cotizaciones` falla silenciosamente → `cotizaciones=None` | Ambas funciones tienen fallback a `data_procesada/`; si sigue vacío verificar que el CSV de cotizaciones existe ahí |
 | `regenerar-snapshot` silencioso para Cobranza | Pagos CSVs archivados en `data_procesada/` antes del restart; `find_latest_cobranza_csvs` ya tiene fallback automático | Verificar que exista al menos un `Pagos_Principlaes_*.csv` en `data_procesada/` |
+| Pagos Proveedores muestra $0 / sin datos | CSV `Pagos_Facturas_Compras_*.csv` no encontrado en `data/` ni `data_procesada/` | Verificar que n8n haya depositado el archivo; endpoint devuelve HTTP 404 si falta |
+| `Pago_Facturas_Nostas_Credito` no carga | CSV opcional — si no existe, `find_latest_pagos_proveedores_csvs` devuelve `(path_fc, None)` sin error | `build_pagos_proveedores_dashboard` acepta `notas_credito=[]` correctamente |
+| Gastos Operativos: campo `Fecha` no parsea | Nombre de campo tiene espacio final: `"Gasto Operativo Fecha "` — la coma extra en el header del CSV | Usar exactamente ese nombre (con espacio) en `.get()` |
+| `_find_csv_with_fallback` devuelve CSV de otro módulo | El glob prefix no es suficientemente específico si hay archivos con nombres similares | El regex es el filtro real; el prefix solo acelera el glob |
 
 ---
 
@@ -181,10 +217,12 @@ Comparar fechas siempre con `.date()` para ignorar hora (evita corte de registro
 
 ```bash
 python -m unittest tests/test_facturacion_dashboard.py -v
-python -m unittest tests/test_compras_dashboard.py -v      # 22 tests
-python -m unittest tests/test_cobranza_dashboard.py -v     # 39 tests
-# Suite completa sin FastAPI:
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py -v
+python -m unittest tests/test_compras_dashboard.py -v                  # 22 tests
+python -m unittest tests/test_cobranza_dashboard.py -v                 # 44 tests
+python -m unittest tests/test_pagos_proveedores_dashboard.py -v        # 23 tests
+python -m unittest tests/test_gastos_operativos_dashboard.py -v        # 26 tests (+ 15 de regex/tarjeta/categoría)
+# Suite completa sin FastAPI (130 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py -v
 ```
 
 Correr siempre antes de hacer commit en `rtb_analisis.py`.
@@ -218,3 +256,5 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-04 | Nuevo módulo Cobranza (4º tab). Monto cobrado = `Total` de principales únicamente. Secundarias = 2º cobro del mismo pedido; su `Total` NO se suma al ingreso. Días de cobranza = `days_diff(fecha_asociacion, fecha_pago)`. CSV prefix tiene typo "Principlaes" de n8n — respetado en código. |
 | 2026-06-05 | Cobranza: análisis de pendientes por cobrar vía campo `Pedido Pago Cotizacion`. Cruce usa todos los pagos (sin filtro periodo). `find_latest_cobranza_csvs` y `load_cotizaciones` caen a `data_procesada/` como fallback post-archivo. |
 | 2026-06-05 | Cobranza: sección "Días de cobranza" rediseñada — pie chart donut (paleta azules/dorados del tema), stats con tarjetas `.tiempos-kpi` con color de acento. |
+| 2026-06-05 | Cobranza: nueva sección "Top 10 clientes con crédito activo" — barras horizontales (rojo), ordenadas por monto pendiente desc. Backend: `tables.top_clientes_pendientes` en `build_cobranza_dashboard`, agrupando `pendientes_cot` completo (no el top-20 truncado). 5 tests nuevos. |
+| 2026-06-05 | Nuevos módulos "Pagos a Proveedores" y "Gastos Operativos" (5º y 6º tabs). Backend: `build_pagos_proveedores_dashboard`, `build_gastos_operativos_dashboard`, `_find_csv_with_fallback` (genérico, compartido). Reglas clave: `cantidad_pagada` puede ser negativo (NC aplicada), `tipo_pago` viene con prefijo numérico, `Deducible` es string "TRUE"/"FALSE", campos de Gastos tienen espacios en el nombre. 49 tests nuevos (23 + 26). Suite completa: 130 tests. |
