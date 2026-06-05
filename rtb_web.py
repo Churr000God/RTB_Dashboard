@@ -1337,23 +1337,19 @@ def render_index() -> str:
           <section class="status-section" id="pagosTemporalSection" hidden>
             <h2 class="section-title" id="pagosTemporalTitle">Comportamiento temporal</h2>
             <p class="section-subtitle" id="pagosTemporalSubtitle"></p>
-            <div class="section-body">
-              <div class="table-wrap">
-                <table class="data-table">
-                  <thead><tr><th id="pagosTemporalHeading">Per.</th><th>Pagos</th><th>Monto pagado</th></tr></thead>
-                  <tbody id="pagosTemporalRows"></tbody>
-                </table>
-              </div>
-              <div>
-                <div class="weekly-chart-wrap">
-                  <div class="chart-view-toggle">
-                    <button class="chart-view-btn active" id="pagosTemporalVistaMonto" type="button">Monto</button>
-                    <button class="chart-view-btn" id="pagosTemporalVistaCantidad" type="button">Cantidad</button>
-                  </div>
-                  <canvas class="weekly-chart" id="pagosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de pagos a proveedores"></canvas>
-                  <div class="chart-tooltip" id="pagosTemporalTooltip" hidden></div>
-                </div>
-              </div>
+            <div class="chart-view-toggle" style="margin-bottom:8px">
+              <button class="chart-view-btn active" id="pagosTemporalVistaMonto" type="button">Monto</button>
+              <button class="chart-view-btn" id="pagosTemporalVistaCantidad" type="button">Cantidad</button>
+            </div>
+            <div class="weekly-chart-wrap" style="height:360px;width:100%">
+              <canvas class="weekly-chart" id="pagosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de pagos a proveedores" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="pagosTemporalTooltip" hidden></div>
+            </div>
+            <div class="table-wrap" style="margin-top:16px">
+              <table class="data-table">
+                <thead><tr><th id="pagosTemporalHeading">Per.</th><th>Pagos</th><th>Monto pagado</th></tr></thead>
+                <tbody id="pagosTemporalRows"></tbody>
+              </table>
             </div>
           </section>
 
@@ -1381,33 +1377,10 @@ def render_index() -> str:
           <section class="status-section" id="pagosTopProveedoresSection" hidden>
             <h2 class="section-title">Top proveedores por monto pagado</h2>
             <p class="section-subtitle">Mayores pagos acumulados en el periodo.</p>
-            <div class="section-body">
-              <div class="hbar-chart" id="pagosTopProveedoresChart"></div>
-              <div class="pie-tooltip" id="pagosTopProveedoresTooltip" hidden></div>
-            </div>
+            <div class="hbar-chart" id="pagosTopProveedoresChart"></div>
+            <div class="chart-tooltip" id="pagosTopProveedoresTooltip" hidden></div>
           </section>
 
-          <section class="status-section" id="pagosNotasSection" hidden>
-            <h2 class="section-title">Notas de crédito y anticipos</h2>
-            <p class="section-subtitle">Documentos complementarios: notas de crédito y facturas de anticipo pagadas a proveedores.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Proveedor</th><th>Documento</th><th>Tipo</th><th>Factura asociada</th><th style="min-width:100px">Tipo pago</th><th>Monto</th><th>Estado</th></tr></thead>
-                <tbody id="pagosNotasRows"></tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="status-section" id="pagosDetalleSection" hidden>
-            <h2 class="section-title">Detalle de pagos</h2>
-            <p class="section-subtitle">Top 50 pagos del periodo por monto.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Proveedor</th><th>Factura</th><th>Fecha</th><th style="min-width:110px">Tipo pago</th><th>Monto</th><th>NC</th></tr></thead>
-                <tbody id="pagosDetalleRows"></tbody>
-              </table>
-            </div>
-          </section>
         </section>
 
         <section id="gastos_operativosPanel" class="gastos_operativos-panel" aria-label="Gastos operativos" hidden>
@@ -1418,43 +1391,28 @@ def render_index() -> str:
           <section class="status-section" id="gastosTemporalSection" hidden>
             <h2 class="section-title" id="gastosTemporalTitle">Comportamiento temporal</h2>
             <p class="section-subtitle" id="gastosTemporalSubtitle"></p>
-            <div class="section-body">
-              <div class="table-wrap">
-                <table class="data-table">
-                  <thead><tr><th id="gastosTemporalHeading">Per.</th><th>Gastos</th><th>Monto</th></tr></thead>
-                  <tbody id="gastosTemporalRows"></tbody>
-                </table>
-              </div>
-              <div>
-                <div class="weekly-chart-wrap">
-                  <div class="chart-view-toggle">
-                    <button class="chart-view-btn active" id="gastosTemporalVistaMonto" type="button">Monto</button>
-                    <button class="chart-view-btn" id="gastosTemporalVistaCantidad" type="button">Cantidad</button>
-                  </div>
-                  <canvas class="weekly-chart" id="gastosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de gastos operativos"></canvas>
-                  <div class="chart-tooltip" id="gastosTemporalTooltip" hidden></div>
-                </div>
-              </div>
+            <div class="chart-view-toggle" style="margin-bottom:8px">
+              <button class="chart-view-btn active" id="gastosTemporalVistaMonto" type="button">Monto</button>
+              <button class="chart-view-btn" id="gastosTemporalVistaCantidad" type="button">Cantidad</button>
             </div>
+            <div class="weekly-chart-wrap" style="height:360px;width:100%">
+              <canvas class="weekly-chart" id="gastosTemporalChart" width="760" height="360" aria-label="Comportamiento temporal de gastos operativos" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="gastosTemporalTooltip" hidden></div>
+            </div>
+            <canvas id="gastosTemporalTableCanvas" style="width:100%;display:block;margin-top:16px"></canvas>
           </section>
 
           <section class="status-section" id="gastosCategoriaSection" hidden>
             <h2 class="section-title">Distribución por categoría</h2>
             <p class="section-subtitle">Gasto total agrupado por categoría operativa.</p>
             <div class="section-body pie-layout">
-              <div class="table-wrap">
-                <table class="data-table">
-                  <thead><tr><th>Categoría</th><th>#</th><th>Monto</th><th>%</th></tr></thead>
-                  <tbody id="gastosCategoriaRows"></tbody>
-                </table>
-              </div>
+              <canvas id="gastosCategoriaTableCanvas" style="width:100%;display:block"></canvas>
               <div>
                 <div class="pie-chart-wrap">
                   <canvas id="gastosCategoriaPie" width="520" height="520" aria-label="Categorías de gastos operativos" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
-                  <div class="pie-center" id="gastosCategoriaPieCenter"><strong>100%</strong><span>Monto</span></div>
                 </div>
                 <div class="pie-tooltip" id="gastosCategoriaTooltip" hidden></div>
-                <div class="pie-legend" id="gastosCategoriaPieLegend"></div>
+                <canvas id="gastosCategoriaPieLegend" style="width:100%;display:block;margin-top:8px"></canvas>
               </div>
             </div>
           </section>
@@ -1462,43 +1420,27 @@ def render_index() -> str:
           <section class="status-section" id="gastosTopProveedoresSection" hidden>
             <h2 class="section-title">Top proveedores</h2>
             <p class="section-subtitle">Mayores gastos acumulados en el periodo por proveedor.</p>
-            <div class="section-body">
-              <div class="hbar-chart" id="gastosTopProveedoresChart"></div>
-              <div class="pie-tooltip" id="gastosTopProveedoresTooltip" hidden></div>
-            </div>
+            <canvas id="gastosTopProveedoresChart" style="width:100%;display:block" aria-label="Top proveedores por gasto"></canvas>
+            <div class="pie-tooltip" id="gastosTopProveedoresTooltip" hidden></div>
           </section>
 
           <section class="status-section" id="gastosTarjetaSection" hidden>
             <h2 class="section-title">Gasto por tarjeta</h2>
             <p class="section-subtitle">Distribución por número de tarjeta — útil para conciliación bancaria.</p>
-            <div class="section-body">
-              <div class="hbar-chart" id="gastosTarjetaChart"></div>
-              <div class="pie-tooltip" id="gastosTarjetaTooltip" hidden></div>
-            </div>
+            <canvas id="gastosTarjetaChart" style="width:100%;display:block" aria-label="Gasto por tarjeta"></canvas>
+            <div class="pie-tooltip" id="gastosTarjetaTooltip" hidden></div>
           </section>
 
           <section class="status-section" id="gastosFiscalSection" hidden>
             <h2 class="section-title">Análisis fiscal</h2>
             <p class="section-subtitle">Desglose deducible vs no deducible e IVA acreditable.</p>
             <div id="gastosFiscalCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Tipo</th><th>#</th><th>Monto</th><th>IVA</th></tr></thead>
-                <tbody id="gastosFiscalRows"></tbody>
-              </table>
+            <div class="weekly-chart-wrap" style="height:240px">
+              <canvas class="weekly-chart" id="gastosFiscalChart" width="760" height="240" aria-label="Análisis fiscal: deducible vs no deducible" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="gastosFiscalTooltip" hidden></div>
             </div>
           </section>
 
-          <section class="status-section" id="gastosDetalleSection" hidden>
-            <h2 class="section-title">Detalle de gastos</h2>
-            <p class="section-subtitle">Top 50 gastos del periodo por monto.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Descripción</th><th>Categoría</th><th>Proveedor</th><th>Fecha</th><th>Tarjeta</th><th>Total</th><th style="min-width:70px">Deducible</th></tr></thead>
-                <tbody id="gastosDetalleRows"></tbody>
-              </table>
-            </div>
-          </section>
         </section>
 
       </div>
@@ -1582,6 +1524,8 @@ def render_index() -> str:
     const pagosProveedoresPanel = document.querySelector('#pagos_proveedoresPanel');
     const gastosOperativosPanel = document.querySelector('#gastos_operativosPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
+    const pagosProveedoresKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
+    const gastosOperativosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
     const cobranzaTemporalSubtitle = document.querySelector('#cobranzaTemporalSubtitle');
@@ -1680,6 +1624,10 @@ def render_index() -> str:
     let pagosTipoPagoChart = { slices: [], activeIndex: null };
     let gastosTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let gastosCategoriaChart = { slices: [], activeIndex: null };
+    let gastosCategoriaTableData = [];
+    let gastosFiscalGroupedState = {};
+    let gastosTemporalTableDraw = null;
+    let gastosCategoriaTableDraw = null;
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -2986,6 +2934,351 @@ def render_index() -> str:
       });
     }
 
+    function renderHBarCanvas(canvas, tooltip, data, opts) {
+      if (!canvas || !data || !data.length) return;
+      const ROW_H = 36, GAP = 8, PAD_T = 12, PAD_B = 12, PAD_L = 120, PAD_R = 16;
+      const totalH = PAD_T + data.length * ROW_H + (data.length - 1) * GAP + PAD_B;
+      const labelField = opts.labelField || 'label';
+      const maxM = Math.max(...data.map((d) => d[opts.barField] || 0), 1);
+      canvas.style.height = totalH + 'px';
+      function draw() {
+        const W = canvas.offsetWidth;
+        if (!W) { requestAnimationFrame(draw); return; }
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = W * dpr;
+        canvas.height = totalH * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, totalH);
+        ctx.fillStyle = '#f4f7f9';
+        ctx.fillRect(0, 0, W, totalH);
+        data.forEach((d, i) => {
+          const y = PAD_T + i * (ROW_H + GAP);
+          const barAreaW = W - PAD_L - PAD_R;
+          const barW = Math.max(2, (Math.max(d[opts.barField] || 0, 0) / maxM) * barAreaW);
+          const label = String(d[labelField] || '');
+          const truncated = label.length > 14 ? label.slice(0, 13) + '…' : label;
+          ctx.fillStyle = '#5b6673';
+          ctx.font = '600 11px system-ui, sans-serif';
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(truncated, PAD_L - 8, y + ROW_H / 2);
+          ctx.fillStyle = opts.color || '#276f86';
+          ctx.beginPath();
+          const rv = 4, bx = PAD_L, by = y, bw = barW, bh = ROW_H;
+          ctx.moveTo(bx + rv, by); ctx.lineTo(bx + bw - rv, by);
+          ctx.arcTo(bx + bw, by, bx + bw, by + rv, rv);
+          ctx.lineTo(bx + bw, by + bh - rv);
+          ctx.arcTo(bx + bw, by + bh, bx + bw - rv, by + bh, rv);
+          ctx.lineTo(bx + rv, by + bh);
+          ctx.arcTo(bx, by + bh, bx, by + bh - rv, rv);
+          ctx.lineTo(bx, by + rv);
+          ctx.arcTo(bx, by, bx + rv, by, rv);
+          ctx.closePath();
+          ctx.fill();
+          const valText = formatMoney(d[opts.barField] || 0);
+          ctx.font = 'bold 11px system-ui, sans-serif';
+          if (barW > 70) {
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'left';
+            ctx.fillText(valText, PAD_L + 8, y + ROW_H / 2);
+          } else {
+            ctx.fillStyle = '#5b6673';
+            ctx.textAlign = 'left';
+            ctx.fillText(valText, PAD_L + barW + 6, y + ROW_H / 2);
+          }
+        });
+      }
+      draw();
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => draw());
+        ro.observe(canvas);
+      }
+      canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const my = e.clientY - rect.top;
+        let hit = -1;
+        data.forEach((d, i) => {
+          const y = PAD_T + i * (ROW_H + GAP);
+          if (my >= y && my <= y + ROW_H) hit = i;
+        });
+        if (hit >= 0 && tooltip) {
+          tooltip.innerHTML = opts.tooltipFn(data[hit]);
+          tooltip.hidden = false;
+          placeTooltipNear(tooltip, e.clientX, e.clientY);
+        } else if (tooltip) tooltip.hidden = true;
+      };
+      canvas.onmouseleave = () => { if (tooltip) tooltip.hidden = true; };
+    }
+
+    // ── Canvas helpers: generic table, kpi-cards, grouped-bar, pie-legend ────
+
+    function drawTableCanvas(canvas, columns, rows, opts) {
+      opts = opts || {};
+      if (!canvas) return;
+      const ROW_H = 32, HEAD_H = 28, PAD_L = 12, PAD_R = 12, PAD_T = 0, PAD_B = 8;
+      function totalH() { return PAD_T + HEAD_H + rows.length * ROW_H + PAD_B; }
+      function draw(activeRow) {
+        const H = totalH();
+        canvas.style.height = H + 'px';
+        const W = canvas.offsetWidth;
+        if (!W) { requestAnimationFrame(() => draw(activeRow)); return; }
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = W * dpr;
+        canvas.height = H * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, H);
+        const nCols = columns.length;
+        const colWs = columns.map((c) => (c.type === 'money' ? 90 : c.type === 'badge' ? 110 : 0));
+        const fixedW = colWs.reduce((s, w) => s + w, 0);
+        const flexCols = colWs.filter((w) => w === 0).length;
+        const flexW = Math.max(60, (W - PAD_L - PAD_R - fixedW) / Math.max(flexCols, 1));
+        const resolvedW = colWs.map((w) => (w === 0 ? flexW : w));
+        const colX = [];
+        let cx = PAD_L;
+        for (let i = 0; i < nCols; i++) { colX.push(cx); cx += resolvedW[i]; }
+        // Header
+        ctx.fillStyle = '#d8e1e8'; ctx.fillRect(0, PAD_T, W, HEAD_H);
+        ctx.fillStyle = '#5b6673'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+        columns.forEach((c, i) => {
+          ctx.textAlign = c.align === 'right' ? 'right' : 'left';
+          const tx = c.align === 'right' ? colX[i] + resolvedW[i] - 6 : colX[i] + 6;
+          ctx.fillText((c.title || '').toUpperCase(), tx, PAD_T + HEAD_H / 2);
+        });
+        // Rows
+        rows.forEach((row, ri) => {
+          const ry = PAD_T + HEAD_H + ri * ROW_H;
+          const isActive = ri === activeRow;
+          ctx.fillStyle = isActive ? '#d4eaf0' : (ri % 2 === 1 ? '#eef2f5' : '#f4f7f9');
+          ctx.fillRect(0, ry, W, ROW_H);
+          ctx.strokeStyle = '#dde4ea'; ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(0, ry + ROW_H); ctx.lineTo(W, ry + ROW_H); ctx.stroke();
+          columns.forEach((c, i) => {
+            const cellX = colX[i], cellW = resolvedW[i], cy2 = ry + ROW_H / 2;
+            if (c.type === 'badge') {
+              const bInfo = c.badge ? c.badge(row, ri) : null;
+              if (bInfo) {
+                ctx.font = 'bold 10px system-ui, sans-serif';
+                const tw = ctx.measureText(bInfo.text).width;
+                const bW = tw + 16, bH = 18, bx = cellX + 6, by = cy2 - bH / 2;
+                drawRoundRect(ctx, bx, by, bW, bH, 9);
+                ctx.fillStyle = bInfo.bg; ctx.fill();
+                ctx.strokeStyle = bInfo.border || bInfo.color; ctx.lineWidth = 1; ctx.stroke();
+                ctx.fillStyle = bInfo.color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                ctx.fillText(bInfo.text, bx + 8, cy2);
+              }
+            } else if (c.type === 'money') {
+              const val = row[c.key];
+              ctx.fillStyle = '#2b3a45'; ctx.font = '11px system-ui, sans-serif';
+              ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+              ctx.fillText(formatMoney(val != null ? val : 0), cellX + cellW - 6, cy2);
+            } else {
+              let val = c.renderVal ? c.renderVal(row, ri) : (row[c.key] != null ? String(row[c.key]) : '');
+              ctx.font = '11px system-ui, sans-serif';
+              const maxW = cellW - 12;
+              while (val.length > 1 && ctx.measureText(val).width > maxW) val = val.slice(0, -1) + '…';
+              ctx.fillStyle = c.colorOf ? c.colorOf(row, ri) : '#2b3a45';
+              ctx.textAlign = c.align === 'right' ? 'right' : 'left';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(val, c.align === 'right' ? cellX + cellW - 6 : cellX + 6, cy2);
+            }
+          });
+        });
+      }
+      draw(opts.activeRow != null ? opts.activeRow : null);
+      if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => draw(null)); ro.observe(canvas); }
+      if (opts.tooltipEl) {
+        canvas.onmousemove = (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const my = e.clientY - rect.top;
+          const ri = Math.floor((my - HEAD_H - PAD_T) / ROW_H);
+          if (ri >= 0 && ri < rows.length) {
+            if (opts.tooltipFn) { opts.tooltipEl.innerHTML = opts.tooltipFn(rows[ri], ri); opts.tooltipEl.hidden = false; placeTooltipNear(opts.tooltipEl, e.clientX, e.clientY); }
+            if (opts.onRowHover) opts.onRowHover(ri, e);
+          } else { opts.tooltipEl.hidden = true; if (opts.onRowHover) opts.onRowHover(-1, e); }
+        };
+        canvas.onmouseleave = () => { opts.tooltipEl.hidden = true; if (opts.onRowHover) opts.onRowHover(-1, null); };
+      }
+      return draw;
+    }
+
+    function drawKpiCardsCanvas(canvas, cards) {
+      if (!canvas || !cards || !cards.length) return;
+      const CARD_H = 72, PAD = 12, GAP = 10, ACCENT_W = 5;
+      const totalH = CARD_H + PAD * 2;
+      canvas.style.height = totalH + 'px';
+      function draw() {
+        const W = canvas.offsetWidth;
+        if (!W) { requestAnimationFrame(draw); return; }
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = W * dpr; canvas.height = totalH * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, totalH);
+        ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, totalH);
+        const nCards = cards.length;
+        const cardW = (W - PAD * 2 - GAP * (nCards - 1)) / nCards;
+        cards.forEach((c, i) => {
+          const cx = PAD + i * (cardW + GAP), cy = PAD;
+          drawRoundRect(ctx, cx, cy, cardW, CARD_H, 6); ctx.fillStyle = '#ffffff'; ctx.fill();
+          ctx.strokeStyle = '#dde4ea'; ctx.lineWidth = 1; ctx.stroke();
+          drawRoundRect(ctx, cx, cy, ACCENT_W, CARD_H, 3); ctx.fillStyle = c.accent || '#276f86'; ctx.fill();
+          const tx = cx + ACCENT_W + 10;
+          ctx.fillStyle = '#65717e'; ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(c.label || '', tx, cy + 8);
+          ctx.fillStyle = '#1d2e36'; ctx.font = 'bold 16px system-ui, sans-serif';
+          ctx.textBaseline = 'middle'; ctx.fillText(c.value || '', tx, cy + 36);
+          if (c.note) {
+            ctx.fillStyle = '#65717e'; ctx.font = '10px system-ui, sans-serif';
+            ctx.textBaseline = 'bottom';
+            let note = c.note;
+            const maxW = cardW - ACCENT_W - 22;
+            while (note.length > 1 && ctx.measureText(note).width > maxW) note = note.slice(0, -1) + '…';
+            ctx.fillText(note, tx, cy + CARD_H - 6);
+          }
+        });
+      }
+      draw();
+      if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => draw()); ro.observe(canvas); }
+    }
+
+    function drawGroupedBarChart(canvas, tooltip, groups, opts) {
+      if (!canvas || !groups || !groups.length) return;
+      opts = opts || {};
+      const seriesA = opts.seriesA || { key: 'a', label: 'A', color: '#d96058' };
+      const seriesB = opts.seriesB || { key: 'b', label: 'B', color: '#4b8bd4' };
+      const labelKey = opts.labelKey || 'label';
+      const valueFmt = opts.valueFmt || formatMoney;
+      const state = opts.state || {};
+      function draw(activeIndex) {
+        const rect2 = resizeCanvasToDisplay(canvas, canvas.getContext('2d'));
+        const ctx = canvas.getContext('2d');
+        const width = rect2.width, height = rect2.height;
+        ctx.clearRect(0, 0, width, height);
+        const pad = { left: 72, right: 24, top: 26, bottom: 54 };
+        const plotW = width - pad.left - pad.right;
+        const plotH = height - pad.top - pad.bottom;
+        const maxVal = Math.max(...groups.map((g) => Math.max(g[seriesA.key] || 0, g[seriesB.key] || 0)), 1);
+        const maxY = maxVal * 1.18;
+        const slot = plotW / groups.length;
+        const pairW = Math.min(80, slot * 0.65);
+        const barW = (pairW - 4) / 2;
+        state.points = [];
+        ctx.fillStyle = '#fbfcfd'; ctx.fillRect(0, 0, width, height);
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+        for (let gi = 0; gi <= 4; gi++) {
+          const y = pad.top + plotH * (gi / 4);
+          ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+          ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+          ctx.fillText(valueFmt(maxY * (1 - gi / 4)).replace('MXN', '').trim(), pad.left - 8, y);
+        }
+        groups.forEach((g, index) => {
+          const centerX = pad.left + slot * index + slot / 2;
+          const valA = g[seriesA.key] || 0, valB = g[seriesB.key] || 0;
+          const hA = (valA / maxY) * plotH, hB = (valB / maxY) * plotH;
+          const yBase = pad.top + plotH;
+          const xLeft = centerX - pairW / 2, xRight = xLeft + barW + 4;
+          const isActive = activeIndex === index;
+          ctx.globalAlpha = activeIndex == null || isActive ? 1 : 0.35;
+          if (valA > 0) { drawRoundRect(ctx, xLeft, yBase - hA, barW, hA, 5); ctx.fillStyle = seriesA.color; ctx.fill(); }
+          if (valB > 0) { drawRoundRect(ctx, xRight, yBase - hB, barW, hB, 5); ctx.fillStyle = seriesB.color; ctx.fill(); }
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+          ctx.font = `${isActive ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillText(String(g[labelKey] || ''), centerX, pad.top + plotH + 8);
+          state.points.push({ slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), group: g });
+        });
+        // Legend drawn inside canvas bottom area
+        ctx.globalAlpha = 1;
+        const legY = pad.top + plotH + 32;
+        let legX = pad.left;
+        [seriesA, seriesB].forEach((s) => {
+          const swW = 14, swH = 10;
+          ctx.fillStyle = s.color;
+          drawRoundRect(ctx, legX, legY, swW, swH, 2); ctx.fill();
+          ctx.fillStyle = '#5b6673'; ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(s.label, legX + swW + 5, legY + swH / 2);
+          legX += swW + 5 + ctx.measureText(s.label).width + 16;
+        });
+      }
+      state.draw = draw;
+      state.activeIndex = null;
+      draw(null);
+      canvas.addEventListener('mousemove', (event) => {
+        const pts = state.points || [];
+        if (!pts.length) return;
+        const rect2 = canvas.getBoundingClientRect();
+        const x = event.clientX - rect2.left;
+        const idx = pts.findIndex((p) => x >= p.slotLeft && x < p.slotRight);
+        if (idx >= 0) {
+          state.activeIndex = idx; draw(idx);
+          if (tooltip) {
+            const g = pts[idx].group;
+            tooltip.innerHTML = `<b>${escapeHtml(String(g[labelKey] || ''))}</b>
+              <div><span>${escapeHtml(seriesA.label)}</span><strong>${valueFmt(g[seriesA.key] || 0)}</strong></div>
+              <div><span>${escapeHtml(seriesB.label)}</span><strong>${valueFmt(g[seriesB.key] || 0)}</strong></div>`;
+            tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
+          }
+        } else {
+          state.activeIndex = null; draw(null);
+          if (tooltip) tooltip.hidden = true;
+        }
+      });
+      canvas.addEventListener('mouseleave', () => {
+        state.activeIndex = null; draw(null);
+        if (tooltip) tooltip.hidden = true;
+      });
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => draw(state.activeIndex));
+        ro.observe(canvas);
+      }
+    }
+
+    function drawPieLegendCanvas(canvas, slices, colors) {
+      if (!canvas || !slices.length) return;
+      const ITEM_H = 26, SWATCH_W = 12, SWATCH_H = 12, PAD = 8, GAP = 14;
+      function draw() {
+        const W = canvas.offsetWidth;
+        if (!W) { requestAnimationFrame(draw); return; }
+        const dpr = window.devicePixelRatio || 1;
+        // First pass: compute rows needed
+        const ctx = canvas.getContext('2d');
+        ctx.font = '11px system-ui, sans-serif';
+        let xPos = PAD, row = 0;
+        slices.forEach((s) => {
+          const itemW = SWATCH_W + 5 + ctx.measureText(s.label || '').width + GAP;
+          if (xPos + itemW > W - PAD && xPos > PAD) { row++; xPos = PAD; }
+          xPos += itemW;
+        });
+        const totalH = (row + 1) * ITEM_H + PAD;
+        canvas.style.height = totalH + 'px';
+        canvas.width = W * dpr; canvas.height = totalH * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, totalH);
+        ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, totalH);
+        xPos = PAD; let rowY = 0;
+        slices.forEach((s, i) => {
+          ctx.font = '11px system-ui, sans-serif';
+          const lw = ctx.measureText(s.label || '').width;
+          const itemW = SWATCH_W + 5 + lw + GAP;
+          if (xPos + itemW > W - PAD && xPos > PAD) { rowY++; xPos = PAD; }
+          const y = rowY * ITEM_H + PAD / 2;
+          ctx.fillStyle = colors[i % colors.length];
+          drawRoundRect(ctx, xPos, y + (ITEM_H - SWATCH_H) / 2, SWATCH_W, SWATCH_H, 2); ctx.fill();
+          ctx.fillStyle = '#5b6673'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(s.label || '', xPos + SWATCH_W + 5, y + ITEM_H / 2);
+          xPos += itemW;
+        });
+      }
+      draw();
+      if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => draw()); ro.observe(canvas); }
+    }
+
     function renderTopChart(container, tooltip, data, opts) {
       if (!data || !data.length) { container.closest('section')?.hidden === false && (container.innerHTML = ''); return; }
       const labelField = opts.labelField || 'cliente';
@@ -3212,7 +3505,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -4846,36 +5139,44 @@ def render_index() -> str:
       const canvas2 = document.querySelector('#pagosTipoPagoPie');
       if (!canvas2 || !pagosTipoPagoChart.slices.length) return;
       const ctx = canvas2.getContext('2d');
-      resizeCanvasToDisplay(canvas2, ctx);
-      const W = canvas2.width, H = canvas2.height;
-      const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 8, ri = r * 0.52;
-      ctx.clearRect(0, 0, W, H);
-      pagosTipoPagoChart.slices.forEach((s, i) => {
+      const rect = canvas2.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas2.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas2.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      pagosTipoPagoChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
         ctx.beginPath(); ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, s.start, s.end);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
         ctx.closePath();
-        ctx.fillStyle = i === activeIndex ? PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length] + 'cc' : PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length];
-        ctx.fill();
-        if (i === activeIndex) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
       });
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
-      const center = document.querySelector('#pagosTipoPagoPieCenter');
-      if (center) {
-        if (activeIndex !== null && pagosTipoPagoChart.slices[activeIndex]) {
-          const s = pagosTipoPagoChart.slices[activeIndex];
-          center.innerHTML = `<strong>${s.pct}</strong><span>${escapeHtml(s.label)}</span>`;
-        } else { center.innerHTML = '<strong>100%</strong><span>Monto</span>'; }
-      }
+      ctx.beginPath(); ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd'; ctx.fill();
+      ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
     }
 
     function pagosTipoPagoSliceAtEvent(event) {
       const canvas2 = document.querySelector('#pagosTipoPagoPie');
       const rect = canvas2.getBoundingClientRect();
-      const x = event.clientX - rect.left - canvas2.offsetWidth / 2;
-      const y = event.clientY - rect.top - canvas2.offsetHeight / 2;
-      let angle = Math.atan2(y, x); if (angle < -Math.PI / 2) angle += 2 * Math.PI;
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
       return pagosTipoPagoChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
     }
 
@@ -4886,79 +5187,155 @@ def render_index() -> str:
       if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === pagosTipoPagoChart.activeIndex));
       const tbody = document.querySelector('#pagosTipoPagoRows');
       if (tbody) tbody.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === pagosTipoPagoChart.activeIndex));
+      const center = document.querySelector('#pagosTipoPagoPieCenter');
       const tooltip = document.querySelector('#pagosTipoPagoTooltip');
+      if (pagosTipoPagoChart.activeIndex === null) {
+        if (tooltip) tooltip.hidden = true;
+        if (center) center.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = pagosTipoPagoChart.slices[pagosTipoPagoChart.activeIndex];
+      if (!slice) return;
+      if (center) center.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.tipo)}</span>`;
+      if (event && tooltip) placeTooltipNear(tooltip, event.clientX, event.clientY);
       if (tooltip) {
-        if (index >= 0 && pagosTipoPagoChart.slices[index]) {
-          const s = pagosTipoPagoChart.slices[index];
-          tooltip.innerHTML = `<strong>${escapeHtml(s.label)}</strong><br>Monto: ${s.monto}<br>Pagos: ${s.n}<br>${s.pct}`;
-          tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
-        } else { tooltip.hidden = true; }
+        tooltip.innerHTML = `
+          <b>${escapeHtml(slice.tipo)}</b>
+          <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+          <div><span>Pagos</span><strong>${formatNumber(slice.qty)}</strong></div>
+          <div><span>% monto</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+        `;
+        tooltip.hidden = false;
       }
     }
 
     function renderPagosTipoPago(tipoPago) {
       const section = document.querySelector('#pagosTipoPagoSection');
       if (!tipoPago || !tipoPago.length) { if (section) section.hidden = true; return; }
-      if (section) section.hidden = false;
-      const total = tipoPago.reduce((s, t) => s + (t.m || 0), 0);
+      const rows = [...tipoPago].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
+      if (!totalMonto) { if (section) section.hidden = true; return; }
       const tbody = document.querySelector('#pagosTipoPagoRows');
-      if (tbody) tbody.innerHTML = tipoPago.map((t, i) => {
-        const pct = total > 0 ? ((t.m / total) * 100).toFixed(1) : 0;
-        return `<tr><td style="color:${PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length]};font-weight:700">${escapeHtml(t.tipo)}</td><td>${t.n}</td><td>${formatMoney(t.m)}</td><td>${pct}%</td></tr>`;
+      if (tbody) tbody.innerHTML = rows.map((row, index) => {
+        const color = PAGOS_TP_COLORS[index % PAGOS_TP_COLORS.length];
+        const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+        return `<tr data-index="${index}">
+          <td><span class="status-name" style="--status-color:${color}"><span class="status-dot"></span>${escapeHtml(row.tipo)}</span></td>
+          <td>${formatNumber(row.n)}</td>
+          <td>${formatMoney(row.m)}</td>
+          <td>${formatPercent(montoPct)}</td>
+        </tr>`;
       }).join('');
-      let angle = -Math.PI / 2;
-      pagosTipoPagoChart.slices = tipoPago.map((t, i) => {
-        const pct = total > 0 ? t.m / total : 0;
-        const sweep = pct * 2 * Math.PI;
-        const slice = { label: t.tipo, start: angle, end: angle + sweep, pct: (pct * 100).toFixed(1) + '%', n: t.n, monto: formatMoney(t.m) };
-        angle += sweep; return slice;
+      let current = -Math.PI / 2;
+      pagosTipoPagoChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const color = PAGOS_TP_COLORS[index % PAGOS_TP_COLORS.length];
+        const slice = {
+          tipo: row.tipo, qty: Number(row.n || 0), monto: value,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color, start: current, end: current + span,
+        };
+        current += span;
+        return slice;
       });
-      renderPagosTipoPagoPie();
       const legend = document.querySelector('#pagosTipoPagoLegend');
-      if (legend) legend.innerHTML = tipoPago.map((t, i) => `<span class="legend-item" data-index="${i}"><span class="legend-swatch" style="background:${PAGOS_TP_COLORS[i % PAGOS_TP_COLORS.length]}"></span>${escapeHtml(t.tipo)}</span>`).join('');
+      if (legend) legend.innerHTML = pagosTipoPagoChart.slices.map((slice, index) => `
+        <button class="legend-item" type="button" style="--status-color:${slice.color}" data-index="${index}">
+          <span class="legend-swatch"></span>
+          <span>${escapeHtml(slice.tipo)}</span>
+          <strong>${formatPercent(slice.montoPct)}</strong>
+        </button>
+      `).join('');
+      if (section) section.hidden = false;
+      setActivePagosTipoPago(null);
       const pie = document.querySelector('#pagosTipoPagoPie');
-      const tooltip = document.querySelector('#pagosTipoPagoTooltip');
       if (pie) {
-        pie.addEventListener('mousemove', (e) => setActivePagosTipoPago(pagosTipoPagoSliceAtEvent(e), e));
-        pie.addEventListener('mouseleave', () => { setActivePagosTipoPago(-1, {}); if (tooltip) tooltip.hidden = true; });
+        pie.addEventListener('mousemove', (event) => {
+          const index = pagosTipoPagoSliceAtEvent(event);
+          if (index !== null && index >= 0) setActivePagosTipoPago(index, event);
+          else setActivePagosTipoPago(null);
+        });
+        pie.addEventListener('mouseleave', () => setActivePagosTipoPago(null));
       }
-      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => {
-        item.addEventListener('mouseenter', (e) => setActivePagosTipoPago(i, e));
-        item.addEventListener('mouseleave', () => { setActivePagosTipoPago(-1, {}); if (tooltip) tooltip.hidden = true; });
-      });
+      if (legend) {
+        legend.addEventListener('mousemove', (event) => {
+          const item = event.target.closest('.legend-item');
+          if (item) setActivePagosTipoPago(Number(item.dataset.index), event);
+        });
+        legend.addEventListener('mouseleave', () => setActivePagosTipoPago(null));
+      }
+      if (tbody) {
+        tbody.addEventListener('mousemove', (event) => {
+          const row = event.target.closest('tr');
+          if (row) setActivePagosTipoPago(Number(row.dataset.index), event);
+        });
+        tbody.addEventListener('mouseleave', () => setActivePagosTipoPago(null));
+      }
     }
 
     function drawPagosTemporalChart(activeIndex = null) {
       const canvas2 = document.querySelector('#pagosTemporalChart');
       if (!canvas2 || !pagosTemporalState.rows.length) return;
       const ctx = canvas2.getContext('2d');
-      resizeCanvasToDisplay(canvas2, ctx);
-      const W = canvas2.width, H = canvas2.height, pad = { t: 20, r: 20, b: 40, l: 70 };
+      const rect = resizeCanvasToDisplay(canvas2, ctx);
+      const width = rect.width, height = rect.height;
+      ctx.clearRect(0, 0, width, height);
       const rows = pagosTemporalState.rows;
       const vista = pagosTemporalState.vista;
-      const vals = rows.map((r) => vista === 'monto' ? (r.monto || 0) : (r.pagos || 0));
-      const maxV = Math.max(...vals, 1);
-      const barW = Math.max(4, ((W - pad.l - pad.r) / rows.length) * 0.6);
-      const step = (W - pad.l - pad.r) / rows.length;
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, H);
-      rows.forEach((row, i) => {
-        const val = vals[i];
-        const x = pad.l + i * step + step / 2;
-        const barH = (val / maxV) * (H - pad.t - pad.b);
-        const y = H - pad.b - barH;
-        const color = i === activeIndex ? '#159895' : '#276f86';
-        ctx.fillStyle = color; drawRoundRect(ctx, x - barW / 2, y, barW, barH, 3); ctx.fill();
-        ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(row.etiqueta, x, H - pad.b + 14);
+      const values = rows.map((r) => Number(vista === 'monto' ? r.monto : r.pagos) || 0);
+      const maxVal = Math.max(...values, 1);
+      const maxY = maxVal * 1.18;
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const slot = plotW / rows.length;
+      const barW = Math.min(56, slot * 0.6);
+      pagosTemporalState.points = [];
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        const labelVal = maxY * (1 - i / 4);
+        ctx.fillText(vista === 'monto' ? formatMoney(labelVal).replace('MXN', '').trim() : formatNumber(labelVal), pad.left - 8, y);
+      }
+      rows.forEach((row, index) => {
+        const val = Number(vista === 'monto' ? row.monto : row.pagos) || 0;
+        const barH = (val / maxY) * plotH;
+        const x = pad.left + slot * index + (slot - barW) / 2;
+        const y = pad.top + plotH - barH;
+        const isActive = activeIndex === index;
+        ctx.fillStyle = isActive ? '#1d5368' : '#276f86';
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.5;
+        drawRoundRect(ctx, x, y, barW, barH, 5);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isActive ? '#1d5368' : '#65717e';
+        ctx.font = `${isActive ? 700 : 500} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, pad.left + slot * index + slot / 2, pad.top + plotH + 14);
+        pagosTemporalState.points.push({ x: pad.left + slot * index + slot / 2, slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), row, index });
       });
-      ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-      [0, 0.5, 1].forEach((f) => {
-        const y = H - pad.b - f * (H - pad.t - pad.b);
-        const v = f * maxV;
-        ctx.fillText(vista === 'monto' ? formatMoney(v) : Math.round(v), pad.l - 6, y + 4);
-      });
-      pagosTemporalState.points = rows.map((_, i) => pad.l + i * step + step / 2);
+    }
+
+    function setActivePagosTemporal(index, event) {
+      pagosTemporalState.activeIndex = index >= 0 ? index : null;
+      drawPagosTemporalChart(pagosTemporalState.activeIndex);
+      const tbody = document.querySelector('#pagosTemporalRows');
+      if (tbody) tbody.querySelectorAll('tr').forEach((tr, i) => tr.classList.toggle('active', i === pagosTemporalState.activeIndex));
+      const tooltip = document.querySelector('#pagosTemporalTooltip');
+      if (pagosTemporalState.activeIndex === null) { if (tooltip) tooltip.hidden = true; return; }
+      const row = pagosTemporalState.rows[pagosTemporalState.activeIndex];
+      if (!row) return;
+      if (event && tooltip) placeTooltipNear(tooltip, event.clientX, event.clientY);
+      if (tooltip) {
+        tooltip.innerHTML = `<b>${escapeHtml(row.etiqueta)}</b><div><span>Pagos</span><strong>${formatNumber(row.pagos)}</strong></div><div><span>Monto pagado</span><strong>${formatMoney(row.monto)}</strong></div>`;
+        tooltip.hidden = false;
+      }
     }
 
     function renderPagosTemporal(temporal) {
@@ -4972,27 +5349,31 @@ def render_index() -> str:
       if (title) title.textContent = temporal.behavior_title || 'Comportamiento temporal';
       if (subtitle) subtitle.textContent = temporal.hint || '';
       const tbody = document.querySelector('#pagosTemporalRows');
-      if (tbody) tbody.innerHTML = temporal.periodos.map((p) =>
-        `<tr><td>${escapeHtml(p.etiqueta)}</td><td>${p.pagos || 0}</td><td>${formatMoney(p.monto || 0)}</td></tr>`
+      if (tbody) tbody.innerHTML = temporal.periodos.map((p, i) =>
+        `<tr data-index="${i}"><td><strong>${escapeHtml(p.etiqueta)}</strong></td><td>${formatNumber(p.pagos || 0)}</td><td>${formatMoney(p.monto || 0)}</td></tr>`
       ).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
       pagosTemporalState.rows = temporal.periodos;
       pagosTemporalState.tendencias = temporal.tendencias || null;
-      drawPagosTemporalChart();
+      setActivePagosTemporal(null);
       const chart = document.querySelector('#pagosTemporalChart');
-      const tooltip = document.querySelector('#pagosTemporalTooltip');
+      const tbody2 = document.querySelector('#pagosTemporalRows');
       if (chart) {
         chart.addEventListener('mousemove', (e) => {
           const rect = chart.getBoundingClientRect();
-          const mx = e.clientX - rect.left;
-          let closest = -1, minD = Infinity;
-          pagosTemporalState.points.forEach((px, i) => { const d = Math.abs(px - mx); if (d < minD) { minD = d; closest = i; }});
-          if (closest >= 0) {
-            drawPagosTemporalChart(closest);
-            const p = pagosTemporalState.rows[closest];
-            if (tooltip) { tooltip.innerHTML = `<strong>${escapeHtml(p.etiqueta)}</strong><br>Pagos: ${p.pagos || 0}<br>Monto: ${formatMoney(p.monto || 0)}`; tooltip.hidden = false; placeTooltipNear(tooltip, e.clientX, e.clientY); }
-          }
+          const x = e.clientX - rect.left;
+          const idx = pagosTemporalState.points.findIndex((p) => x >= p.slotLeft && x < p.slotRight);
+          if (idx >= 0) setActivePagosTemporal(idx, e);
+          else setActivePagosTemporal(null);
         });
-        chart.addEventListener('mouseleave', () => { drawPagosTemporalChart(); if (tooltip) tooltip.hidden = true; });
+        chart.addEventListener('mouseleave', () => setActivePagosTemporal(null));
+      }
+      if (tbody2) {
+        tbody2.addEventListener('mousemove', (e) => {
+          const row = e.target.closest('tr');
+          if (!row) return;
+          setActivePagosTemporal(Number(row.dataset.index), e);
+        });
+        tbody2.addEventListener('mouseleave', () => setActivePagosTemporal(null));
       }
       const btnMonto = document.querySelector('#pagosTemporalVistaMonto');
       const btnCant = document.querySelector('#pagosTemporalVistaCantidad');
@@ -5000,48 +5381,30 @@ def render_index() -> str:
       if (btnCant) btnCant.addEventListener('click', () => { pagosTemporalState.vista = 'cantidad'; btnCant.classList.add('active'); if (btnMonto) btnMonto.classList.remove('active'); drawPagosTemporalChart(); });
     }
 
-    function renderPagosNotas(notas) {
-      const section = document.querySelector('#pagosNotasSection');
-      if (!notas || !notas.length) { if (section) section.hidden = true; return; }
-      if (section) section.hidden = false;
-      const tbody = document.querySelector('#pagosNotasRows');
-      if (tbody) tbody.innerHTML = notas.map((r) =>
-        `<tr><td>${escapeHtml(r.proveedor)}</td><td>${escapeHtml(r.numero_doc)}</td><td>${escapeHtml(r.tipo_doc)}</td><td>${escapeHtml(r.factura_asociada || '—')}</td><td>${escapeHtml(r.tipo_pago)}</td><td>${formatMoney(r.monto)}</td><td>${escapeHtml(r.estado)}</td></tr>`
-      ).join('');
-    }
-
-    function renderPagosDetalle(detalle) {
-      const section = document.querySelector('#pagosDetalleSection');
-      if (!detalle || !detalle.length) { if (section) section.hidden = true; return; }
-      if (section) section.hidden = false;
-      const tbody = document.querySelector('#pagosDetalleRows');
-      if (tbody) tbody.innerHTML = detalle.map((r) => {
-        const nc = r.nc_aplicada ? '<span style="background:#e7f3f3;color:#276f86;border-radius:4px;padding:1px 6px;font-size:.8rem;font-weight:700">NC</span>' : '';
-        return `<tr><td>${escapeHtml(r.proveedor)}</td><td>${escapeHtml(r.numero_factura)}</td><td>${escapeHtml(r.fecha_pago)}</td><td>${escapeHtml(r.tipo_pago)}</td><td>${formatMoney(r.monto)}</td><td>${nc}</td></tr>`;
-      }).join('');
-    }
-
     function renderPagosProveedores(body) {
       const kpis = body.kpis || {};
-      const pagosKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
       const cards = [];
-      cards.push(`<article class="kpi-card primary"><h2>Total pagado a proveedores</h2>${metric('Pagos FC + NC/Anticipos', formatMoney(kpis.monto_total), body.periodo)}${delta('Pagos de facturas', formatMoney(kpis.monto_fc))}${delta('Notas / Anticipos', formatMoney(kpis.monto_nc))}</article>`);
-      cards.push(`<article class="kpi-card accent"><h2>Pagos en el periodo</h2>${metric('Facturas pagadas', formatNumber(kpis.n_pagados))}${delta('NC / Anticipos', formatNumber(kpis.n_nc))}</article>`);
+      cards.push(`<article class="kpi-card primary"><h2>Total pagado a proveedores</h2><div class="kpi-pair">${metric('Pagos FC + NC/Anticipos', formatMoney(kpis.monto_total), 'Periodo actual')}${metric('Pagos de facturas', formatMoney(kpis.monto_fc), 'Solo facturas de compra')}</div>${metric('Notas / Anticipos', formatMoney(kpis.monto_nc), 'Documentos complementarios')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Pagos en el periodo</h2><div class="kpi-pair">${metric('Facturas pagadas', formatNumber(kpis.n_pagados), 'Cantidad de pagos')}${metric('NC / Anticipos', formatNumber(kpis.n_nc), 'NC + facturas anticipo')}</div></article>`);
       const pendStyle = kpis.n_pendientes > 0 ? 'warning' : 'accent';
-      cards.push(`<article class="kpi-card ${pendStyle}"><h2>Pagos pendientes</h2>${metric(kpis.n_pendientes > 0 ? 'Sin liquidar' : 'Sin pendientes', formatNumber(kpis.n_pendientes))}</article>`);
+      cards.push(`<article class="kpi-card ${pendStyle}"><h2>Pagos pendientes</h2>${metric(kpis.n_pendientes > 0 ? 'Sin liquidar' : 'Sin pendientes', formatNumber(kpis.n_pendientes), 'Estatus "No Pagado"')}</article>`);
       const pctDef = kpis.pct_por_definir ? (kpis.pct_por_definir * 100).toFixed(1) + '%' : '0%';
       const defStyle = kpis.n_por_definir > 0 ? 'warning' : 'accent';
-      cards.push(`<article class="kpi-card ${defStyle}"><h2>Tipo de pago no definido</h2>${metric('Sin tipo asignado', formatNumber(kpis.n_por_definir))}${delta('% del total pagado', pctDef)}</article>`);
-      if (pagosKpiGrid) pagosKpiGrid.innerHTML = cards.join('');
+      cards.push(`<article class="kpi-card ${defStyle}"><h2>Tipo de pago no definido</h2><div class="kpi-pair">${metric('Sin tipo asignado', formatNumber(kpis.n_por_definir), 'Tipo "99 Por definir"')}${metric('% del total pagado', pctDef, 'Sobre monto FC')}</div></article>`);
+      if (pagosProveedoresKpiGrid) pagosProveedoresKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
       renderPagosTemporal(body.series?.temporal);
       renderPagosTipoPago(body.series?.tipo_pago || []);
       const topProvSection = document.querySelector('#pagosTopProveedoresSection');
       if (body.tables?.top_proveedores?.length) {
         if (topProvSection) topProvSection.hidden = false;
-        renderTopChart(document.querySelector('#pagosTopProveedoresChart'), document.querySelector('#pagosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor)}</strong><br>${formatMoney(d.m)}<br>${d.n} pago(s)` });
+        renderTopChart(document.querySelector('#pagosTopProveedoresChart'), document.querySelector('#pagosTopProveedoresTooltip'), body.tables.top_proveedores, {
+          barField: 'm', labelField: 'proveedor', color: '#d0b56b',
+          tooltipFn: (d) => `<b>${escapeHtml(d.proveedor)}</b>
+            <div><span>Pagos</span><strong>${formatNumber(d.n)}</strong></div>
+            <div><span>Monto pagado</span><strong>${formatMoney(d.m)}</strong></div>`,
+        });
       } else { if (topProvSection) topProvSection.hidden = true; }
-      renderPagosNotas(body.tables?.notas_anticipos || []);
-      renderPagosDetalle(body.tables?.pagos_detalle || []);
     }
 
     async function loadPagosProveedores() {
@@ -5059,7 +5422,18 @@ def render_index() -> str:
     }
 
     // ── MÓDULO GASTOS OPERATIVOS ──────────────────────────────────────────────
-    const GASTOS_CAT_COLORS = ['#276f86','#d0b56b','#d96058','#57c5b6','#8a6f35','#159895','#5b6673','#1d5368','#c6ad6a','#225e73'];
+    const GASTOS_CAT_COLORS = [
+      '#276f86',  // teal primario
+      '#d0b56b',  // dorado acento
+      '#57c5b6',  // mint
+      '#225e73',  // teal-2
+      '#c6ad6a',  // dorado-2
+      '#1d5368',  // teal-3
+      '#8a6f35',  // dorado oscuro
+      '#d96058',  // alerta
+      '#3d97b2',  // teal medio (variante)
+      '#e8cf87',  // dorado claro (variante)
+    ];
 
     function renderGastosCategoriaPie(activeIndex = null) {
       const canvas2 = document.querySelector('#gastosCategoriaPie');
@@ -5080,13 +5454,22 @@ def render_index() -> str:
       ctx.globalCompositeOperation = 'destination-out';
       ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
-      const center = document.querySelector('#gastosCategoriaPieCenter');
-      if (center) {
-        if (activeIndex !== null && gastosCategoriaChart.slices[activeIndex]) {
-          const s = gastosCategoriaChart.slices[activeIndex];
-          center.innerHTML = `<strong>${s.pct}</strong><span>${escapeHtml(s.label)}</span>`;
-        } else { center.innerHTML = '<strong>100%</strong><span>Monto</span>'; }
-      }
+      // Draw center text in canvas (donut hole)
+      ctx.beginPath(); ctx.arc(cx, cy, ri - 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#f4f7f9'; ctx.fill();
+      const pMainTxt = activeIndex !== null && gastosCategoriaChart.slices[activeIndex]
+        ? gastosCategoriaChart.slices[activeIndex].pct
+        : '100%';
+      const pSubTxt = activeIndex !== null && gastosCategoriaChart.slices[activeIndex]
+        ? gastosCategoriaChart.slices[activeIndex].label
+        : 'Monto';
+      ctx.fillStyle = '#1d2e36';
+      ctx.font = `bold 22px system-ui, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(pMainTxt, cx, cy - 12);
+      ctx.fillStyle = '#65717e';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.fillText(pSubTxt.length > 10 ? pSubTxt.slice(0, 9) + '…' : pSubTxt, cx, cy + 12);
     }
 
     function gastosCategoriaSliceAtEvent(event) {
@@ -5101,10 +5484,8 @@ def render_index() -> str:
     function setActiveGastosCategoria(index, event) {
       gastosCategoriaChart.activeIndex = index >= 0 ? index : null;
       renderGastosCategoriaPie(gastosCategoriaChart.activeIndex);
-      const legend = document.querySelector('#gastosCategoriaPieLegend');
-      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
-      const tbody = document.querySelector('#gastosCategoriaRows');
-      if (tbody) tbody.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
+      // Highlight matching row in table canvas
+      if (typeof gastosCategoriaTableDraw === 'function') gastosCategoriaTableDraw(index >= 0 ? index : null);
       const tooltip = document.querySelector('#gastosCategoriaTooltip');
       if (tooltip) {
         if (index >= 0 && gastosCategoriaChart.slices[index]) {
@@ -5120,11 +5501,9 @@ def render_index() -> str:
       if (!categoria || !categoria.length) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
       const total = categoria.reduce((s, t) => s + (t.m || 0), 0);
-      const tbody = document.querySelector('#gastosCategoriaRows');
-      if (tbody) tbody.innerHTML = categoria.map((t, i) => {
-        const pct = total > 0 ? ((t.m / total) * 100).toFixed(1) : 0;
-        return `<tr><td style="color:${GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length]};font-weight:700">${escapeHtml(t.categoria)}</td><td>${t.n}</td><td>${formatMoney(t.m)}</td><td>${pct}%</td></tr>`;
-      }).join('');
+      // Store for potential redraws
+      gastosCategoriaTableData = categoria;
+      // Build slices (needed by pie and table canvas)
       let angle = -Math.PI / 2;
       gastosCategoriaChart.slices = categoria.map((t, i) => {
         const pct = total > 0 ? t.m / total : 0;
@@ -5132,19 +5511,34 @@ def render_index() -> str:
         const slice = { label: t.categoria, start: angle, end: angle + sweep, pct: (pct * 100).toFixed(1) + '%', n: t.n, monto: formatMoney(t.m) };
         angle += sweep; return slice;
       });
+      // Draw table canvas and store draw function for cross-highlight
+      const tableCv = document.querySelector('#gastosCategoriaTableCanvas');
+      if (tableCv) gastosCategoriaTableDraw = drawTableCanvas(tableCv, [
+        { title: 'Categoría', key: 'categoria', colorOf: (row, ri) => GASTOS_CAT_COLORS[ri % GASTOS_CAT_COLORS.length] },
+        { title: '#', key: 'n', align: 'right' },
+        { title: 'Monto', key: 'm', type: 'money', align: 'right' },
+        { title: '%', renderVal: (row) => (total > 0 ? ((row.m / total) * 100).toFixed(1) : '0') + '%', align: 'right' },
+      ], categoria);
       renderGastosCategoriaPie();
-      const legend = document.querySelector('#gastosCategoriaPieLegend');
-      if (legend) legend.innerHTML = categoria.map((t, i) => `<span class="legend-item" data-index="${i}"><span class="legend-swatch" style="background:${GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length]}"></span>${escapeHtml(t.categoria)}</span>`).join('');
+      // Draw legend canvas
+      const legCv = document.querySelector('#gastosCategoriaPieLegend');
+      if (legCv) drawPieLegendCanvas(legCv, gastosCategoriaChart.slices, GASTOS_CAT_COLORS);
       const pie = document.querySelector('#gastosCategoriaPie');
       const tooltip = document.querySelector('#gastosCategoriaTooltip');
       if (pie) {
         pie.addEventListener('mousemove', (e) => setActiveGastosCategoria(gastosCategoriaSliceAtEvent(e), e));
         pie.addEventListener('mouseleave', () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; });
       }
-      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => {
-        item.addEventListener('mouseenter', (e) => setActiveGastosCategoria(i, e));
-        item.addEventListener('mouseleave', () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; });
-      });
+      // Wire table canvas hover → highlight pie slice + chart row
+      if (tableCv) {
+        const TH = 28, TR = 32;
+        tableCv.onmousemove = (e) => {
+          const ri = Math.floor((e.clientY - tableCv.getBoundingClientRect().top - TH) / TR);
+          if (ri >= 0 && ri < categoria.length) setActiveGastosCategoria(ri, e);
+          else { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; }
+        };
+        tableCv.onmouseleave = () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; };
+      }
     }
 
     function drawGastosTemporalChart(activeIndex = null) {
@@ -5184,16 +5578,17 @@ def render_index() -> str:
       const section = document.querySelector('#gastosTemporalSection');
       if (!temporal || !temporal.periodos) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
-      const heading = document.querySelector('#gastosTemporalHeading');
       const title = document.querySelector('#gastosTemporalTitle');
       const subtitle = document.querySelector('#gastosTemporalSubtitle');
-      if (heading) heading.textContent = temporal.table_heading || 'Per.';
       if (title) title.textContent = temporal.behavior_title || 'Comportamiento temporal';
       if (subtitle) subtitle.textContent = temporal.hint || '';
-      const tbody = document.querySelector('#gastosTemporalRows');
-      if (tbody) tbody.innerHTML = temporal.periodos.map((p) =>
-        `<tr><td>${escapeHtml(p.etiqueta)}</td><td>${p.gastos || 0}</td><td>${formatMoney(p.monto || 0)}</td></tr>`
-      ).join('') || '<tr><td colspan="3">Sin datos.</td></tr>';
+      // Draw table as canvas and store draw function for cross-highlight
+      const tableCv = document.querySelector('#gastosTemporalTableCanvas');
+      if (tableCv) gastosTemporalTableDraw = drawTableCanvas(tableCv, [
+        { title: temporal.table_heading || 'Per.', key: 'etiqueta' },
+        { title: 'Gastos', key: 'gastos', align: 'right' },
+        { title: 'Monto', key: 'monto', type: 'money', align: 'right' },
+      ], temporal.periodos || []);
       gastosTemporalState.rows = temporal.periodos;
       drawGastosTemporalChart();
       const chart = document.querySelector('#gastosTemporalChart');
@@ -5206,11 +5601,39 @@ def render_index() -> str:
           gastosTemporalState.points.forEach((px, i) => { const d = Math.abs(px - mx); if (d < minD) { minD = d; closest = i; }});
           if (closest >= 0) {
             drawGastosTemporalChart(closest);
+            if (gastosTemporalTableDraw) gastosTemporalTableDraw(closest);
             const p = gastosTemporalState.rows[closest];
             if (tooltip) { tooltip.innerHTML = `<strong>${escapeHtml(p.etiqueta)}</strong><br>Gastos: ${p.gastos || 0}<br>Monto: ${formatMoney(p.monto || 0)}`; tooltip.hidden = false; placeTooltipNear(tooltip, e.clientX, e.clientY); }
           }
         });
-        chart.addEventListener('mouseleave', () => { drawGastosTemporalChart(); if (tooltip) tooltip.hidden = true; });
+        chart.addEventListener('mouseleave', () => {
+          drawGastosTemporalChart();
+          if (gastosTemporalTableDraw) gastosTemporalTableDraw(null);
+          if (tooltip) tooltip.hidden = true;
+        });
+      }
+      // Wire table canvas hover → highlight bar in chart
+      if (tableCv) {
+        const TH = 28, TR = 32;
+        const periodos = temporal.periodos || [];
+        tableCv.onmousemove = (e) => {
+          const ri = Math.floor((e.clientY - tableCv.getBoundingClientRect().top - TH) / TR);
+          if (ri >= 0 && ri < periodos.length) {
+            drawGastosTemporalChart(ri);
+            if (gastosTemporalTableDraw) gastosTemporalTableDraw(ri);
+            const p = gastosTemporalState.rows[ri];
+            if (tooltip) { tooltip.innerHTML = `<strong>${escapeHtml(p.etiqueta)}</strong><br>Gastos: ${p.gastos || 0}<br>Monto: ${formatMoney(p.monto || 0)}`; tooltip.hidden = false; placeTooltipNear(tooltip, e.clientX, e.clientY); }
+          } else {
+            drawGastosTemporalChart();
+            if (gastosTemporalTableDraw) gastosTemporalTableDraw(null);
+            if (tooltip) tooltip.hidden = true;
+          }
+        };
+        tableCv.onmouseleave = () => {
+          drawGastosTemporalChart();
+          if (gastosTemporalTableDraw) gastosTemporalTableDraw(null);
+          if (tooltip) tooltip.hidden = true;
+        };
       }
       const btnMonto = document.querySelector('#gastosTemporalVistaMonto');
       const btnCant = document.querySelector('#gastosTemporalVistaCantidad');
@@ -5222,56 +5645,48 @@ def render_index() -> str:
       const section = document.querySelector('#gastosFiscalSection');
       if (!tablas || !tablas.deducibles_split) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
+      // 1. KPI cards (tiempos-kpi HTML)
+      const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
       const cards = document.querySelector('#gastosFiscalCards');
-      if (cards) {
-        const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
-        cards.innerHTML = [
-          `<div class="tiempos-kpi" style="border-left-color:#276f86"><span class="kpi-label">Deducible (${pctDed})</span><span class="kpi-value">${formatMoney(kpis.monto_deducible || 0)}</span><span class="kpi-note">IVA acreditable ${formatMoney(kpis.iva_acreditable || 0)}</span></div>`,
-          `<div class="tiempos-kpi" style="border-left-color:#d96058"><span class="kpi-label">No deducible</span><span class="kpi-value">${formatMoney(kpis.monto_no_deducible || 0)}</span><span class="kpi-note">IVA no acreditable ${formatMoney(kpis.iva_no_acreditable || 0)}</span></div>`,
-        ].join('');
-      }
-      const tbody = document.querySelector('#gastosFiscalRows');
-      if (tbody) tbody.innerHTML = tablas.deducibles_split.map((r) =>
-        `<tr><td>${escapeHtml(r.tipo)}</td><td>${r.n}</td><td>${formatMoney(r.m)}</td><td>${formatMoney(r.iva)}</td></tr>`
-      ).join('');
-    }
-
-    function renderGastosDetalle(detalle) {
-      const section = document.querySelector('#gastosDetalleSection');
-      if (!detalle || !detalle.length) { if (section) section.hidden = true; return; }
-      if (section) section.hidden = false;
-      const tbody = document.querySelector('#gastosDetalleRows');
-      if (tbody) tbody.innerHTML = detalle.map((r) => {
-        const badge = r.deducible ? '<span style="background:#e7f3f3;color:#276f86;border-radius:4px;padding:1px 6px;font-size:.8rem;font-weight:700">✓</span>' : '';
-        return `<tr><td>${escapeHtml(r.nombre)}</td><td>${escapeHtml(r.categoria)}</td><td>${escapeHtml(r.proveedor || '—')}</td><td>${escapeHtml(r.fecha)}</td><td>${escapeHtml(r.tarjeta)}</td><td>${formatMoney(r.total)}</td><td>${badge}</td></tr>`;
-      }).join('');
+      if (cards) cards.innerHTML = [
+        `<div class="tiempos-kpi" style="border-left-color:#276f86"><span class="kpi-label">Deducible (${pctDed})</span><span class="kpi-value">${formatMoney(kpis.monto_deducible || 0)}</span><span class="kpi-note">IVA acreditable ${formatMoney(kpis.iva_acreditable || 0)}</span></div>`,
+        `<div class="tiempos-kpi" style="border-left-color:#d96058"><span class="kpi-label">No deducible</span><span class="kpi-value">${formatMoney(kpis.monto_no_deducible || 0)}</span><span class="kpi-note">IVA no acreditable ${formatMoney(kpis.iva_no_acreditable || 0)}</span></div>`,
+      ].join('');
+      // 2. Grouped bar chart: Deducible vs No deducible × Monto / IVA
+      const chartCv = document.querySelector('#gastosFiscalChart');
+      const tooltipEl = document.querySelector('#gastosFiscalTooltip');
+      if (chartCv) drawGroupedBarChart(chartCv, tooltipEl, tablas.deducibles_split, {
+        labelKey: 'tipo',
+        seriesA: { key: 'm', label: 'Monto', color: '#276f86' },
+        seriesB: { key: 'iva', label: 'IVA', color: '#d0b56b' },
+        state: gastosFiscalGroupedState,
+      });
     }
 
     function renderGastosOperativos(body) {
       const kpis = body.kpis || {};
-      const gastosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
       const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
       const cards = [];
-      cards.push(`<article class="kpi-card primary"><h2>Total gastos operativos</h2>${metric('Total con IVA', formatMoney(kpis.total_total))}${delta('Subtotal', formatMoney(kpis.total_subtotal))}${delta('IVA', formatMoney(kpis.total_iva))}</article>`);
-      cards.push(`<article class="kpi-card accent"><h2>IVA acreditable</h2>${metric('Solo gastos deducibles', formatMoney(kpis.iva_acreditable))}${delta('IVA no acreditable', formatMoney(kpis.iva_no_acreditable))}</article>`);
-      cards.push(`<article class="kpi-card accent"><h2>Deducibles vs No Deducibles</h2>${metric('Deducible (' + pctDed + ')', formatMoney(kpis.monto_deducible))}${delta('No Deducible', formatMoney(kpis.monto_no_deducible))}</article>`);
+      cards.push(`<article class="kpi-card primary"><h2>Total gastos operativos</h2><div class="kpi-pair">${metric('Total con IVA', formatMoney(kpis.total_total), 'Suma del periodo')}${metric('Subtotal', formatMoney(kpis.total_subtotal), 'Sin IVA')}</div>${metric('IVA', formatMoney(kpis.total_iva), 'Impuesto del periodo')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>IVA acreditable</h2><div class="kpi-pair">${metric('Solo gastos deducibles', formatMoney(kpis.iva_acreditable), 'Recuperable ante SAT')}${metric('IVA no acreditable', formatMoney(kpis.iva_no_acreditable), 'Gastos no deducibles')}</div></article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Deducibles vs No Deducibles</h2><div class="kpi-pair">${metric('Deducible (' + pctDed + ')', formatMoney(kpis.monto_deducible), 'Base deducible')}${metric('No Deducible', formatMoney(kpis.monto_no_deducible), 'No reduce ISR')}</div></article>`);
       const rechStyle = kpis.n_rechazados > 0 ? 'warning' : 'accent';
-      cards.push(`<article class="kpi-card ${rechStyle}"><h2>Gastos del periodo</h2>${metric('Realizados', formatNumber(kpis.n_gastos))}${delta(kpis.n_rechazados > 0 ? 'Rechazados' : 'Sin rechazados', formatNumber(kpis.n_rechazados))}</article>`);
-      if (gastosKpiGrid) gastosKpiGrid.innerHTML = cards.join('');
+      cards.push(`<article class="kpi-card ${rechStyle}"><h2>Gastos del periodo</h2><div class="kpi-pair">${metric('Realizados', formatNumber(kpis.n_gastos), 'Estado "Realizado"')}${metric(kpis.n_rechazados > 0 ? 'Rechazados' : 'Sin rechazados', formatNumber(kpis.n_rechazados), 'No suman al total')}</div></article>`);
+      if (gastosOperativosKpiGrid) gastosOperativosKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
       renderGastosTemporal(body.series?.temporal);
       renderGastosCategoria(body.series?.categoria || []);
       const topProvSection = document.querySelector('#gastosTopProveedoresSection');
       if (body.tables?.top_proveedores?.length) {
         if (topProvSection) topProvSection.hidden = false;
-        renderTopChart(document.querySelector('#gastosTopProveedoresChart'), document.querySelector('#gastosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor || '—')}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
+        renderHBarCanvas(document.querySelector('#gastosTopProveedoresChart'), document.querySelector('#gastosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor || '—')}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
       } else { if (topProvSection) topProvSection.hidden = true; }
       const tarSection = document.querySelector('#gastosTarjetaSection');
       if (body.series?.tarjeta?.length) {
         if (tarSection) tarSection.hidden = false;
-        renderTopChart(document.querySelector('#gastosTarjetaChart'), document.querySelector('#gastosTarjetaTooltip'), body.series.tarjeta, { barField: 'm', labelField: 'tarjeta', color: '#159895', tooltipFn: (d) => `<strong>Tarjeta ${escapeHtml(d.tarjeta)}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
+        renderHBarCanvas(document.querySelector('#gastosTarjetaChart'), document.querySelector('#gastosTarjetaTooltip'), body.series.tarjeta, { barField: 'm', labelField: 'tarjeta', color: '#d0b56b', tooltipFn: (d) => `<strong>Tarjeta ${escapeHtml(d.tarjeta)}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
       } else { if (tarSection) tarSection.hidden = true; }
       renderGastosFiscal(body.tables, kpis);
-      renderGastosDetalle(body.tables?.gastos_detalle || []);
     }
 
     async function loadGastosOperativos() {
