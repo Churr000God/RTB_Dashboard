@@ -36,7 +36,7 @@ El override monta el código local (`.:/app`) — cambios en `.py` se reflejan s
 | `contexto/RTB_REPORTE_ACTUAL.md` | Reglas de negocio (mantener actualizada) |
 | `tests/test_facturacion_dashboard.py` | Suite facturación |
 | `tests/test_compras_dashboard.py` | Suite compras (22 tests) |
-| `tests/test_cobranza_dashboard.py` | Suite cobranza (29 tests) |
+| `tests/test_cobranza_dashboard.py` | Suite cobranza (39 tests) |
 
 ---
 
@@ -79,9 +79,11 @@ GET /api/dashboard/*  →  sirve el JSON
 ### Cobranza (cobros de pedidos de ventas)
 - `Pagos_Principlaes_Facturas_Ventas_YYYY-MM-DD_HH-MM.csv` — **nótese el typo "Principlaes"**, viene así de n8n. Regex allowlist: `^Pagos_Principlaes_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
 - `Pagos_Secundarias_Facturas_Ventas_YYYY-MM-DD_HH-MM.csv` — regex: `^Pagos_Secundarias_Facturas_Ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
-- Selección: `find_latest_cobranza_csvs()` en `rtb_web.py`
-- Función: `build_cobranza_dashboard(principales, secundarias, ...)`
+- Selección: `find_latest_cobranza_csvs()` en `rtb_web.py` — busca en `data/` primero; cae a `data_procesada/` cuando `data/` está vacío (post-archivo n8n)
+- `Cotizaciones_*.csv` también se carga con fallback a `data_procesada/` vía `load_cotizaciones()`
+- Función: `build_cobranza_dashboard(principales, secundarias, ..., cotizaciones=None)`
 - Snapshot: `dashboard_data/cobranza_latest.json`
+- Campo nuevo `Pedido Pago Cotizacion` (UUID): vincula cada cobro a su `Cotizacion_id` — 100 % poblado
 
 ---
 
@@ -129,6 +131,13 @@ Un cobro "secundaria" es el **segundo cobro del mismo pedido** facturado en dos 
 ### Cobranza — días de cobranza
 `days_diff(fecha_asociacion, fecha_pago)` — lag entre cuándo se asoció la factura y cuándo se recibió el pago. Solo calculable cuando `Fecha de Asociacion` está poblada (≈79 % de los registros actuales).
 
+### Cobranza — pendientes por cobrar
+Cotizaciones aprobadas (`Estado_cotizacion == "Aprobada"`) cuyo `Cotizacion_id` **no** aparece en ningún registro del CSV de principales.
+- `n_pendientes_cobro` / `monto_pendiente_cobro` = backlog completo (sin filtro de periodo).
+- Cruce usa **todos** los pagos del CSV, no solo los del periodo — un cobro fuera del rango aún marca la cotización como cobrada.
+- `series.pendientes_temporal` = distribución por `Fecha_aprobacion` (rango auto-detectado).
+- `tables.pendientes` = top-20 por monto desc.
+
 ---
 
 ## Granularidad temporal
@@ -155,6 +164,8 @@ Comparar fechas siempre con `.date()` para ignorar hora (evita corte de registro
 | Leyenda de gráfica desborda la sección | `pie-legend` dentro de `weekly-chart-wrap` (altura fija) | Mover `pie-legend` fuera del `weekly-chart-wrap` |
 | `Factura_anticipo_id` llega vacío al normalizar | CSV leído con `encoding='utf-8'` en lugar de `'utf-8-sig'` | Siempre usar `read_csv()` de `rtb_analisis` |
 | Facturación muestra 3 facturas / $180k aunque CSV tiene 273 filas | `Facturas_Anticipo_*.csv` seleccionado como "principales" por tener mtime mayor | Ya corregido con allowlist regex en `find_latest_facturacion_csv`; si reaparece, verificar que la función no fue revertida a denylist |
+| Cobranza: `n_pendientes_cobro = 0` aunque hay cotizaciones aprobadas | `data/` vacío → `load_cotizaciones` falla silenciosamente → `cotizaciones=None` | Ambas funciones tienen fallback a `data_procesada/`; si sigue vacío verificar que el CSV de cotizaciones existe ahí |
+| `regenerar-snapshot` silencioso para Cobranza | Pagos CSVs archivados en `data_procesada/` antes del restart; `find_latest_cobranza_csvs` ya tiene fallback automático | Verificar que exista al menos un `Pagos_Principlaes_*.csv` en `data_procesada/` |
 
 ---
 
@@ -170,7 +181,10 @@ Comparar fechas siempre con `.date()` para ignorar hora (evita corte de registro
 
 ```bash
 python -m unittest tests/test_facturacion_dashboard.py -v
-python -m unittest tests/test_compras_dashboard.py -v   # 22 tests
+python -m unittest tests/test_compras_dashboard.py -v      # 22 tests
+python -m unittest tests/test_cobranza_dashboard.py -v     # 39 tests
+# Suite completa sin FastAPI:
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py -v
 ```
 
 Correr siempre antes de hacer commit en `rtb_analisis.py`.
@@ -202,3 +216,5 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-04 | `find_latest_facturacion_csv` migrada de denylist a allowlist regex `^<prefix>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`. Movida a `rtb_analisis.py` para ser testeable sin FastAPI. 4 tests de regresión agregados a `test_facturacion_dashboard.py`. |
 | 2026-06-04 | Compras: nueva tarjeta KPI "Total del periodo" — `n_fc + n_ant_pendientes` y `tot_fc + monto_pendientes`. Calculada en JS puro en `renderCompras()`, sin cambio de backend ni snapshot. |
 | 2026-06-04 | Nuevo módulo Cobranza (4º tab). Monto cobrado = `Total` de principales únicamente. Secundarias = 2º cobro del mismo pedido; su `Total` NO se suma al ingreso. Días de cobranza = `days_diff(fecha_asociacion, fecha_pago)`. CSV prefix tiene typo "Principlaes" de n8n — respetado en código. |
+| 2026-06-05 | Cobranza: análisis de pendientes por cobrar vía campo `Pedido Pago Cotizacion`. Cruce usa todos los pagos (sin filtro periodo). `find_latest_cobranza_csvs` y `load_cotizaciones` caen a `data_procesada/` como fallback post-archivo. |
+| 2026-06-05 | Cobranza: sección "Días de cobranza" rediseñada — pie chart donut (paleta azules/dorados del tema), stats con tarjetas `.tiempos-kpi` con color de acento. |
