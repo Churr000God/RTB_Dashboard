@@ -100,6 +100,20 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/gastos_operativos_latest.json`
 - Endpoint: `GET /api/dashboard/gastos_operativos`
 
+### Finanzas (consolidado — 7º tab)
+- **No lee CSVs**: `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (consolidador puro).
+- **Dos lentes**:
+  - Devengado: `facturacion.kpis.monto_facturado_vigente` vs `compras.kpis.tot_fc + gastos.kpis.total_total`
+  - Caja: `cobranza.kpis.monto_cobrado_total` vs `pagos_proveedores.kpis.monto_total + gastos.kpis.total_total`
+- **Gastos en ambas bases**: desembolso inmediato, mismo valor en devengado y caja.
+- **IVA trasladado** = `ingreso_caja − ingreso_caja/1.16` (sobre lo cobrado).
+- **IVA acreditable** = `compras.iva_fc + gastos.iva_acreditable`.
+- Las series temporales se alinean por `key` (robusto ante ejes desalineados).
+- Función: `build_finanzas_dashboard(facturacion, cobranza, compras, pagos_proveedores, gastos_operativos, ...)`
+- `publish_finanzas_snapshot` llama a los 5 `load_*_payload` con `_safe()` — si falta un sub-snapshot su aporte es 0.
+- Snapshot: `dashboard_data/finanzas_latest.json`
+- Endpoint: `GET /api/dashboard/finanzas`
+
 ---
 
 ## Reglas de negocio críticas
@@ -221,8 +235,9 @@ python -m unittest tests/test_compras_dashboard.py -v                  # 22 test
 python -m unittest tests/test_cobranza_dashboard.py -v                 # 44 tests
 python -m unittest tests/test_pagos_proveedores_dashboard.py -v        # 23 tests
 python -m unittest tests/test_gastos_operativos_dashboard.py -v        # 26 tests (+ 15 de regex/tarjeta/categoría)
-# Suite completa sin FastAPI (130 tests):
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py -v
+python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 tests
+# Suite completa sin FastAPI (188 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py -v
 ```
 
 Correr siempre antes de hacer commit en `rtb_analisis.py`.
@@ -259,3 +274,4 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-05 | Cobranza: nueva sección "Top 10 clientes con crédito activo" — barras horizontales (rojo), ordenadas por monto pendiente desc. Backend: `tables.top_clientes_pendientes` en `build_cobranza_dashboard`, agrupando `pendientes_cot` completo (no el top-20 truncado). 5 tests nuevos. |
 | 2026-06-05 | Nuevos módulos "Pagos a Proveedores" y "Gastos Operativos" (5º y 6º tabs). Backend: `build_pagos_proveedores_dashboard`, `build_gastos_operativos_dashboard`, `_find_csv_with_fallback` (genérico, compartido). Reglas clave: `cantidad_pagada` puede ser negativo (NC aplicada), `tipo_pago` viene con prefijo numérico, `Deducible` es string "TRUE"/"FALSE", campos de Gastos tienen espacios en el nombre. 49 tests nuevos (23 + 26). Suite completa: 130 tests. |
 | 2026-06-05 | Gastos Operativos: refactor visual completo — todas las tablas y leyendas migradas a `<canvas>`. 4 helpers canvas nuevos en `rtb_web.py`: `drawTableCanvas`, `drawGroupedBarChart`, `drawKpiCardsCanvas`, `drawPieLegendCanvas`. Centro de la dona dibujado en canvas (eliminado `div.pie-center`). Interactividad tabla↔gráfica bidireccional en Comportamiento semanal y Distribución por categoría. Análisis fiscal: tarjetas `.tiempos-kpi` HTML + gráfica de barras agrupadas canvas (Monto `#276f86` / IVA `#d0b56b`). Tabla de detalle eliminada. `GASTOS_CAT_COLORS` y colores de gráficas alineados a la paleta principal del tema. Bug resuelto: usar `renderVal` (no `valueOf`) en columnas de `drawTableCanvas` — `valueOf` es método nativo de Object.prototype y causa `[object Object]` en todas las celdas. |
+| 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
