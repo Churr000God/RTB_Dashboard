@@ -20,7 +20,8 @@ from pydantic import BaseModel
 
 from rtb_analisis import (
     build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard,
-    build_gastos_operativos_dashboard, build_pagos_proveedores_dashboard, build_ventas_dashboard,
+    build_finanzas_dashboard, build_gastos_operativos_dashboard,
+    build_pagos_proveedores_dashboard, build_ventas_dashboard,
     find_latest_csv, find_latest_facturacion_csv, find_latest_gastos_operativos_csv,
     find_latest_pagos_proveedores_csvs, load_cotizaciones, read_csv,
 )
@@ -38,6 +39,7 @@ COMPRAS_SNAPSHOT_FILENAME = "compras_latest.json"
 COBRANZA_SNAPSHOT_FILENAME = "cobranza_latest.json"
 PAGOS_PROVEEDORES_SNAPSHOT_FILENAME = "pagos_proveedores_latest.json"
 GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
+FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
@@ -571,6 +573,63 @@ def load_gastos_operativos_payload(data_dir: str = "data", dashboard_dir: str = 
     return build_gastos_operativos_dashboard(read_csv(g_path))
 
 
+def publish_finanzas_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    """Consolida los 5 sub-dashboards ya persistidos en sus snapshots.
+    Cada sub-load está envuelto en try/except para que un módulo sin CSV no aborte el consolidado.
+    """
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+
+    def _safe(loader):
+        try:
+            return loader()
+        except (FileNotFoundError, KeyError, Exception):
+            return {}
+
+    facturacion      = _safe(lambda: load_facturacion_payload(data_dir, dashboard_dir))
+    cobranza         = _safe(lambda: load_cobranza_payload(data_dir, dashboard_dir))
+    compras          = _safe(lambda: load_compras_payload(data_dir, dashboard_dir))
+    pagos_proveedores = _safe(lambda: load_pagos_proveedores_payload(data_dir, dashboard_dir))
+    gastos_operativos = _safe(lambda: load_gastos_operativos_payload(data_dir, dashboard_dir))
+
+    finanzas = build_finanzas_dashboard(
+        facturacion, cobranza, compras, pagos_proveedores, gastos_operativos,
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "dashboard": {"finanzas": finanzas},
+    }
+    atomic_write_json(Path(dashboard_dir) / FINANZAS_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_finanzas_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / FINANZAS_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["finanzas"]
+    # Construir al vuelo leyendo los sub-snapshots existentes
+    def _safe(loader):
+        try:
+            return loader()
+        except Exception:
+            return {}
+    return build_finanzas_dashboard(
+        _safe(lambda: load_facturacion_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_cobranza_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_compras_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_pagos_proveedores_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_gastos_operativos_payload(data_dir, dashboard_dir)),
+    )
+
+
 def render_index() -> str:
     today = datetime.now()
     _end = today.strftime("%Y-%m-%d")
@@ -642,8 +701,9 @@ def render_index() -> str:
     .module-tab:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(208,181,107,.22); }
     .module-tab.active { border-color: var(--sidebar); background: var(--sidebar); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
     .canvas { min-height: calc(100vh - 104px); border: 1px dashed #c8d2dc; border-radius: 10px; background: var(--paper); padding: 16px; }
-    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden] { display: none; }
+    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden], .finanzas-panel[hidden] { display: none; }
     .compras-panel { display: grid; gap: 14px; }
+    .finanzas-panel { display: grid; gap: 14px; }
     .section-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
     .section-body.pie-layout { grid-template-columns: minmax(0, 1.4fr) minmax(260px, .9fr); align-items: center; }
     .chart-wrap { min-width: 0; }
@@ -1443,6 +1503,54 @@ def render_index() -> str:
 
         </section>
 
+        <section id="finanzasPanel" class="finanzas-panel" aria-label="Finanzas consolidadas" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="finanzasKpiGrid">
+            <p class="panel-state">Cargando finanzas...</p>
+          </div>
+
+          <section class="status-section" id="finanzasDevengadoSection" hidden>
+            <h2 class="section-title">Ingreso vs Egreso — Base devengada</h2>
+            <p class="section-subtitle" id="finanzasDevengadoSubtitle">Facturación emitida vs Compras + Gastos operativos por periodo.</p>
+            <div class="weekly-chart-wrap" style="height:360px;width:100%">
+              <canvas class="weekly-chart" id="finanzasDevengadoChart" width="760" height="360" aria-label="Ingreso vs Egreso devengado" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="finanzasDevengadoTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="finanzasCajaSection" hidden>
+            <h2 class="section-title">Cobrado vs Pagado — Flujo de caja</h2>
+            <p class="section-subtitle" id="finanzasCajaSubtitle">Cobranza recibida vs Pagos a proveedores + Gastos operativos por periodo.</p>
+            <div class="weekly-chart-wrap" style="height:360px;width:100%">
+              <canvas class="weekly-chart" id="finanzasCajaChart" width="760" height="360" aria-label="Cobrado vs Pagado" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="finanzasCajaTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="finanzasWaterfallSection" hidden>
+            <h2 class="section-title">Desglose de utilidad devengada</h2>
+            <p class="section-subtitle">Composición ingreso → egresos → utilidad del periodo.</p>
+            <div class="weekly-chart-wrap" style="height:240px;width:100%">
+              <canvas class="weekly-chart" id="finanzasWaterfallChart" width="760" height="240" aria-label="Waterfall utilidad devengada" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="finanzasWaterfallTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="finanzasComparativoSection" hidden>
+            <h2 class="section-title">Comparativo devengado vs caja</h2>
+            <p class="section-subtitle">Ingresos, egresos y resultado en ambas bases de medición.</p>
+            <canvas id="finanzasComparativoCanvas" style="width:100%;display:block"></canvas>
+          </section>
+
+          <section class="status-section" id="finanzasIvaSection" hidden>
+            <h2 class="section-title">IVA estimado del periodo</h2>
+            <p class="section-subtitle">IVA trasladado (sobre lo cobrado) vs IVA acreditable (compras + gastos deducibles).</p>
+            <div id="finanzasIvaCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
+            <canvas id="finanzasIvaChart" style="width:100%;display:block;margin-top:8px"></canvas>
+            <div class="chart-tooltip" id="finanzasIvaTooltip" hidden></div>
+          </section>
+
+        </section>
+
       </div>
     </section>
   </main>
@@ -1523,9 +1631,11 @@ def render_index() -> str:
     const cobranzaPanel = document.querySelector('#cobranzaPanel');
     const pagosProveedoresPanel = document.querySelector('#pagos_proveedoresPanel');
     const gastosOperativosPanel = document.querySelector('#gastos_operativosPanel');
+    const finanzasPanel = document.querySelector('#finanzasPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
     const pagosProveedoresKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
     const gastosOperativosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
+    const finanzasKpiGrid = document.querySelector('#finanzasKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
     const cobranzaTemporalSubtitle = document.querySelector('#cobranzaTemporalSubtitle');
@@ -1628,6 +1738,10 @@ def render_index() -> str:
     let gastosFiscalGroupedState = {};
     let gastosTemporalTableDraw = null;
     let gastosCategoriaTableDraw = null;
+    let finanzasLoaded = false;
+    let finanzasDevGroupedState = {};
+    let finanzasCajaGroupedState = {};
+    let finanzasIvaGroupedState = {};
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -3505,7 +3619,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, finanzasKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -5703,6 +5817,145 @@ def render_index() -> str:
       }
     }
 
+    // ── MÓDULO FINANZAS ────────────────────────────────────────────────────────
+    const FINANZAS_INGRESO_COLOR = '#57c5b6';   // teal claro — ingresos
+    const FINANZAS_EGRESO_COLOR  = '#d96058';   // rojo alerta — egresos
+    const FINANZAS_COBRADO_COLOR = '#276f86';   // teal primario — cobrado
+    const FINANZAS_PAGADO_COLOR  = '#d0b56b';   // dorado — pagado
+    const FINANZAS_IVA_COLORS    = ['#276f86', '#57c5b6', '#d0b56b'];  // trasladado/acreditable/por pagar
+
+    function renderFinanzasTemporal(temporal) {
+      const devSection = document.querySelector('#finanzasDevengadoSection');
+      const cajaSection = document.querySelector('#finanzasCajaSection');
+      if (!temporal || !temporal.periodos || !temporal.periodos.length) {
+        if (devSection) devSection.hidden = true;
+        if (cajaSection) cajaSection.hidden = true;
+        return;
+      }
+      const subtitle = temporal.chart_suffix ? 'Comportamiento ' + temporal.chart_suffix : '';
+      const devSubEl = document.querySelector('#finanzasDevengadoSubtitle');
+      const cajaSubEl = document.querySelector('#finanzasCajaSubtitle');
+      if (devSubEl) devSubEl.textContent = 'Facturación emitida vs Compras + Gastos op. ' + subtitle;
+      if (cajaSubEl) cajaSubEl.textContent = 'Cobranza recibida vs Pagos + Gastos op. ' + subtitle;
+
+      if (devSection) devSection.hidden = false;
+      drawGroupedBarChart(
+        document.querySelector('#finanzasDevengadoChart'),
+        document.querySelector('#finanzasDevengadoTooltip'),
+        temporal.periodos,
+        { seriesA: { key: 'ingreso_dev', label: 'Ingreso', color: FINANZAS_INGRESO_COLOR },
+          seriesB: { key: 'egreso_dev',  label: 'Egreso',  color: FINANZAS_EGRESO_COLOR  },
+          labelKey: 'etiqueta', valueFmt: formatMoney, state: finanzasDevGroupedState }
+      );
+
+      if (cajaSection) cajaSection.hidden = false;
+      drawGroupedBarChart(
+        document.querySelector('#finanzasCajaChart'),
+        document.querySelector('#finanzasCajaTooltip'),
+        temporal.periodos,
+        { seriesA: { key: 'ingreso_caja', label: 'Cobrado', color: FINANZAS_COBRADO_COLOR },
+          seriesB: { key: 'egreso_caja',  label: 'Pagado',  color: FINANZAS_PAGADO_COLOR  },
+          labelKey: 'etiqueta', valueFmt: formatMoney, state: finanzasCajaGroupedState }
+      );
+    }
+
+    function renderFinanzasWaterfall(waterfall) {
+      const section = document.querySelector('#finanzasWaterfallSection');
+      if (!waterfall || !waterfall.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const canvas2 = document.querySelector('#finanzasWaterfallChart');
+      const tooltip = document.querySelector('#finanzasWaterfallTooltip');
+      if (!canvas2) return;
+      const colorMap = { ingreso: FINANZAS_INGRESO_COLOR, egreso: FINANZAS_EGRESO_COLOR, total: FINANZAS_COBRADO_COLOR };
+      const bars = waterfall.map(r => ({
+        label: r.concepto,
+        value: Math.abs(r.monto),
+        color: colorMap[r.tipo] || '#276f86',
+      }));
+      drawBarChart(canvas2, tooltip, bars, {
+        fmtY: formatMoney,
+        tooltipFn: (d) => `<strong>${escapeHtml(d.label)}</strong><br>${formatMoney(d.value)}`,
+      });
+    }
+
+    function renderFinanzasComparativo(comparativo) {
+      const section = document.querySelector('#finanzasComparativoSection');
+      if (!comparativo || !comparativo.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const canvas2 = document.querySelector('#finanzasComparativoCanvas');
+      if (!canvas2) return;
+      drawTableCanvas(canvas2, [
+        { title: 'Concepto', key: 'concepto', align: 'left' },
+        { title: 'Devengado', key: 'devengado', type: 'money' },
+        { title: 'Caja', key: 'caja', type: 'money' },
+      ], comparativo, {});
+    }
+
+    function renderFinanzasIva(kpis, ivaSplit) {
+      const section = document.querySelector('#finanzasIvaSection');
+      if (!kpis.iva_trasladado && !kpis.iva_acreditable) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const cardsEl = document.querySelector('#finanzasIvaCards');
+      if (cardsEl) {
+        const ivaData = [
+          { label: 'IVA trasladado',  value: formatMoney(kpis.iva_trasladado),  note: 'Sobre lo cobrado',   color: '#276f86' },
+          { label: 'IVA acreditable', value: formatMoney(kpis.iva_acreditable), note: 'Compras + deducibles', color: '#57c5b6' },
+          { label: 'IVA por pagar',   value: formatMoney(kpis.iva_por_pagar),   note: 'Trasladado − acred.',  color: kpis.iva_por_pagar < 0 ? '#57c5b6' : '#d96058' },
+        ];
+        cardsEl.innerHTML = ivaData.map(d =>
+          `<div class="tiempos-kpi" style="border-left-color:${d.color};min-width:160px">
+             <strong style="font-size:18px">${d.value}</strong>
+             <span>${d.label}</span>
+             <span style="font-size:11px;color:#65717e">${d.note}</span>
+           </div>`
+        ).join('');
+      }
+      // Gráfica de barras horizontal del IVA split
+      if (ivaSplit && ivaSplit.length) {
+        drawGroupedBarChart(
+          document.querySelector('#finanzasIvaChart'),
+          document.querySelector('#finanzasIvaTooltip'),
+          ivaSplit,
+          { seriesA: { key: 'm', label: 'Monto IVA', color: '#276f86' },
+            seriesB: { key: 'm', label: 'Monto IVA', color: '#276f86' },
+            labelKey: 'tipo', valueFmt: formatMoney, state: finanzasIvaGroupedState }
+        );
+      }
+    }
+
+    function renderFinanzas(body) {
+      const kpis = body.kpis || {};
+      const mrgDev = kpis.margen_devengado != null ? (kpis.margen_devengado * 100).toFixed(1) + '%' : '—';
+      const mrgCaja = kpis.margen_caja != null ? (kpis.margen_caja * 100).toFixed(1) + '%' : '—';
+      const utilClass = kpis.utilidad_devengada >= 0 ? 'primary' : 'warning';
+      const cajaClass  = kpis.flujo_caja_neto   >= 0 ? 'accent'  : 'warning';
+      const cards = [];
+      cards.push(`<article class="kpi-card ${utilClass}"><h2>Utilidad devengada</h2><div class="kpi-pair">${metric('Ingreso facturado', formatMoney(kpis.ingreso_devengado), 'Facturas vigentes del periodo')}${metric('Egreso devengado', formatMoney(kpis.egreso_devengado), 'Compras + Gastos op.')}</div>${metric('Resultado c/IVA (margen ' + mrgDev + ')', formatMoney(kpis.utilidad_devengada), 'Base devengada')}</article>`);
+      cards.push(`<article class="kpi-card ${cajaClass}"><h2>Flujo de caja</h2><div class="kpi-pair">${metric('Ingreso cobrado', formatMoney(kpis.ingreso_caja), 'Cobranza del periodo')}${metric('Egreso pagado', formatMoney(kpis.egreso_caja), 'Pagos + Gastos op.')}</div>${metric('Flujo neto (margen ' + mrgCaja + ')', formatMoney(kpis.flujo_caja_neto), 'Base caja')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Pendiente por cobrar</h2><div class="kpi-pair">${metric('Monto backlog', formatMoney(kpis.pendiente_cobro), 'Cotizaciones aprobadas sin cobro')}${metric('Cotizaciones', formatNumber(kpis.n_pendientes_cobro), 'Pendientes al cierre')}</div></article>`);
+      cards.push(`<article class="kpi-card accent"><h2>IVA estimado</h2><div class="kpi-pair">${metric('Trasladado', formatMoney(kpis.iva_trasladado), 'Sobre lo cobrado')}${metric('Acreditable', formatMoney(kpis.iva_acreditable), 'Compras + deducibles')}</div>${metric('Por pagar (estimado)', formatMoney(kpis.iva_por_pagar), 'Trasladado − acreditable')}</article>`);
+      if (finanzasKpiGrid) finanzasKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
+      renderFinanzasTemporal(body.series?.temporal);
+      renderFinanzasWaterfall(body.tables?.waterfall_devengado);
+      renderFinanzasComparativo(body.tables?.comparativo);
+      renderFinanzasIva(kpis, body.tables?.iva_split);
+    }
+
+    async function loadFinanzas() {
+      if (finanzasLoaded) return;
+      const kpiGrid2 = document.querySelector('#finanzasKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/finanzas');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de finanzas.');
+        renderFinanzas(body);
+        finanzasLoaded = true;
+      } catch (error) {
+        if (kpiGrid2) kpiGrid2.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     function setActiveModule(moduleName) {
       canvas.dataset.module = moduleName;
       ventasPanel.hidden = moduleName !== 'ventas';
@@ -5711,12 +5964,14 @@ def render_index() -> str:
       cobranzaPanel.hidden = moduleName !== 'cobranza';
       pagosProveedoresPanel.hidden = moduleName !== 'pagos_proveedores';
       gastosOperativosPanel.hidden = moduleName !== 'gastos_operativos';
+      if (finanzasPanel) finanzasPanel.hidden = moduleName !== 'finanzas';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
       if (moduleName === 'compras') loadCompras();
       if (moduleName === 'cobranza') loadCobranza();
       if (moduleName === 'pagos_proveedores') loadPagosProveedores();
       if (moduleName === 'gastos_operativos') loadGastosOperativos();
+      if (moduleName === 'finanzas') loadFinanzas();
     }
 
     form.addEventListener('input', refreshPayload);
@@ -5882,6 +6137,15 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/finanzas")
+    def dashboard_finanzas(request: Request) -> dict:
+        try:
+            return load_finanzas_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/actualizar-datos", status_code=status.HTTP_202_ACCEPTED)
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
         try:
@@ -5948,6 +6212,15 @@ def create_app(
                     payload.fecha_hasta,
                 )
             except FileNotFoundError:
+                pass
+            try:
+                publish_finanzas_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except Exception:
                 pass
             snapshot = publish_ventas_snapshot(
                 request.app.state.data_dir,
@@ -6027,6 +6300,15 @@ def create_app(
                     fecha_hasta,
                 )
             except FileNotFoundError:
+                pass
+            try:
+                publish_finanzas_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except Exception:
                 pass
             files_regenerated = []
             cot_candidates = sorted(

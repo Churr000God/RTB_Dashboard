@@ -1939,6 +1939,194 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
     }
 
 
+def build_finanzas_dashboard(
+    facturacion, cobranza, compras, pagos_proveedores, gastos_operativos,
+    period_label="Periodo actual", fecha_desde=None, fecha_hasta=None,
+):
+    """Consolida los 5 sub-dashboards en una vista de ingresos vs egresos.
+
+    Recibe dicts ya construidos (no rows). Cualquier sub-dashboard puede ser {}
+    o None si su CSV no estaba disponible — se trata su aporte como 0.
+    NO lee CSVs, NO re-filtra por fecha; toda cifra deriva de los sub-dashboards.
+
+    Dos bases paralelas:
+    - DEVENGADO:  ingreso = facturacion,  egreso = compras + gastos.
+    - CAJA:       ingreso = cobranza,     egreso = pagos_proveedores + gastos.
+    Gastos Operativos suma en AMBAS bases (desembolso generalmente inmediato).
+    NUNCA se suman compras + pagos juntos — miden el mismo egreso en momentos distintos.
+
+    IVA trasladado se deriva de lo COBRADO (base caja):
+        iva_trasladado = ingreso_caja − ingreso_caja / 1.16
+    """
+    fac = facturacion or {}
+    cob = cobranza or {}
+    com = compras or {}
+    pag = pagos_proveedores or {}
+    gas = gastos_operativos or {}
+
+    fac_kpis = fac.get("kpis") or {}
+    cob_kpis = cob.get("kpis") or {}
+    com_kpis = com.get("kpis") or {}
+    pag_kpis = pag.get("kpis") or {}
+    gas_kpis = gas.get("kpis") or {}
+
+    # ── KPIs escalares ────────────────────────────────────────────────────────
+    ingreso_devengado  = float(fac_kpis.get("monto_facturado_vigente") or 0)
+    egreso_dev_compras = float(com_kpis.get("tot_fc") or 0)
+    egreso_dev_gastos  = float(gas_kpis.get("total_total") or 0)
+    egreso_devengado   = round(egreso_dev_compras + egreso_dev_gastos, 2)
+    utilidad_devengada = round(ingreso_devengado - egreso_devengado, 2)
+    margen_devengado   = round(utilidad_devengada / ingreso_devengado, 4) if ingreso_devengado else 0.0
+
+    ingreso_caja      = float(cob_kpis.get("monto_cobrado_total") or 0)
+    egreso_caja_pagos = float(pag_kpis.get("monto_total") or 0)
+    egreso_caja_gastos = egreso_dev_gastos  # gastos = desembolso inmediato, mismo valor
+    egreso_caja       = round(egreso_caja_pagos + egreso_caja_gastos, 2)
+    flujo_caja_neto   = round(ingreso_caja - egreso_caja, 2)
+    margen_caja       = round(flujo_caja_neto / ingreso_caja, 4) if ingreso_caja else 0.0
+
+    pendiente_cobro   = float(cob_kpis.get("monto_pendiente_cobro") or 0)
+    n_pendientes_cobro = int(cob_kpis.get("n_pendientes_cobro") or 0)
+    pendiente_pago    = int(pag_kpis.get("n_pendientes") or 0)
+
+    # IVA trasladado: derivado de lo cobrado — ingreso_caja incluye IVA
+    # iva_trasladado = cobrado - cobrado/1.16  (i.e. la parte que es IVA)
+    iva_trasladado  = round(ingreso_caja - ingreso_caja / 1.16, 2) if ingreso_caja else 0.0
+    iva_acreditable = round(
+        float(com_kpis.get("iva_fc") or 0) + float(gas_kpis.get("iva_acreditable") or 0), 2
+    )
+    iva_por_pagar = round(iva_trasladado - iva_acreditable, 2)
+
+    # Señales consolidadas (los 4 módulos que exponen lista signals)
+    all_signals = []
+    for sub in [fac, cob, pag, gas]:
+        all_signals.extend(sub.get("signals") or [])
+
+    # ── Series temporales consolidadas ────────────────────────────────────────
+    def _temporal(sub):
+        return (sub.get("series") or {}).get("temporal") or {}
+
+    def _by_key(temporal):
+        return {p["key"]: p for p in (temporal.get("periodos") or [])}
+
+    # Eje de referencia: primer sub-dashboard que tenga series temporales
+    ref_temporal = None
+    for sub in [fac, cob, com, pag, gas]:
+        t = _temporal(sub)
+        if t.get("keys"):
+            ref_temporal = t
+            break
+
+    if ref_temporal:
+        fac_bk = _by_key(_temporal(fac))
+        cob_bk = _by_key(_temporal(cob))
+        com_bk = _by_key(_temporal(com))
+        pag_bk = _by_key(_temporal(pag))
+        gas_bk = _by_key(_temporal(gas))
+
+        periodos_consolidados = []
+        for key, label in zip(ref_temporal["keys"], ref_temporal["labels"]):
+            fac_p = fac_bk.get(key) or {}
+            cob_p = cob_bk.get(key) or {}
+            com_p = com_bk.get(key) or {}
+            pag_p = pag_bk.get(key) or {}
+            gas_p = gas_bk.get(key) or {}
+
+            i_dev   = float(fac_p.get("monto") or 0)
+            e_dev_c = float(com_p.get("tot") or 0)
+            e_dev_g = float(gas_p.get("monto") or 0)
+            e_dev   = round(e_dev_c + e_dev_g, 2)
+            u_dev   = round(i_dev - e_dev, 2)
+
+            i_caja  = float(cob_p.get("monto") or 0)
+            e_pag   = float(pag_p.get("monto") or 0)
+            e_caja  = round(e_pag + e_dev_g, 2)
+            f_caja  = round(i_caja - e_caja, 2)
+
+            periodos_consolidados.append({
+                "key": key,
+                "etiqueta": label,
+                "ingreso_dev": i_dev,
+                "egreso_dev": e_dev,
+                "utilidad_dev": u_dev,
+                "ingreso_caja": i_caja,
+                "egreso_caja": e_caja,
+                "flujo_caja": f_caja,
+            })
+
+        util_vals = [p["utilidad_dev"] for p in periodos_consolidados]
+        caja_vals = [p["flujo_caja"]    for p in periodos_consolidados]
+        tendencias = {
+            "utilidad_dev": linear_trend(util_vals),
+            "flujo_caja":   linear_trend(caja_vals),
+        }
+        temporal = {
+            "granularidad":   ref_temporal.get("granularidad"),
+            "keys":           ref_temporal["keys"],
+            "labels":         ref_temporal["labels"],
+            "table_heading":  ref_temporal.get("table_heading"),
+            "behavior_title": ref_temporal.get("behavior_title"),
+            "chart_suffix":   ref_temporal.get("chart_suffix"),
+            "hint":           ref_temporal.get("hint"),
+            "periodos":       periodos_consolidados,
+            "tendencias":     tendencias,
+        }
+    else:
+        temporal = {}
+
+    # ── Tablas ────────────────────────────────────────────────────────────────
+    comparativo = [
+        {"concepto": "Ingreso",   "devengado": round(ingreso_devengado, 2),  "caja": round(ingreso_caja, 2)},
+        {"concepto": "Egreso",    "devengado": egreso_devengado,              "caja": egreso_caja},
+        {"concepto": "Resultado", "devengado": utilidad_devengada,            "caja": flujo_caja_neto},
+    ]
+    waterfall_devengado = [
+        {"concepto": "Facturación", "monto": round(ingreso_devengado, 2),   "tipo": "ingreso"},
+        {"concepto": "Compras",     "monto": round(-egreso_dev_compras, 2), "tipo": "egreso"},
+        {"concepto": "Gastos op.",  "monto": round(-egreso_dev_gastos, 2),  "tipo": "egreso"},
+        {"concepto": "Utilidad",    "monto": utilidad_devengada,            "tipo": "total"},
+    ]
+    iva_split = [
+        {"tipo": "Trasladado",  "m": iva_trasladado},
+        {"tipo": "Acreditable", "m": iva_acreditable},
+        {"tipo": "Por pagar",   "m": iva_por_pagar},
+    ]
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "ingreso_devengado":        round(ingreso_devengado, 2),
+            "egreso_devengado":         egreso_devengado,
+            "egreso_devengado_compras": round(egreso_dev_compras, 2),
+            "egreso_devengado_gastos":  round(egreso_dev_gastos, 2),
+            "utilidad_devengada":       utilidad_devengada,
+            "margen_devengado":         margen_devengado,
+            "ingreso_caja":             round(ingreso_caja, 2),
+            "egreso_caja":              egreso_caja,
+            "egreso_caja_pagos":        round(egreso_caja_pagos, 2),
+            "egreso_caja_gastos":       round(egreso_caja_gastos, 2),
+            "flujo_caja_neto":          flujo_caja_neto,
+            "margen_caja":              margen_caja,
+            "pendiente_cobro":          round(pendiente_cobro, 2),
+            "n_pendientes_cobro":       n_pendientes_cobro,
+            "pendiente_pago":           pendiente_pago,
+            "iva_trasladado":           iva_trasladado,
+            "iva_acreditable":          iva_acreditable,
+            "iva_por_pagar":            iva_por_pagar,
+            "n_signals":                len(all_signals),
+        },
+        "series": {
+            "temporal": temporal,
+        },
+        "tables": {
+            "comparativo":        comparativo,
+            "waterfall_devengado": waterfall_devengado,
+            "iva_split":          iva_split,
+        },
+        "signals": all_signals,
+    }
+
+
 # ─── Lectura ────────────────────────────────────────────────────────────────
 def load_all(data_dir="data", allowed_files=None):
     prefixes = {
