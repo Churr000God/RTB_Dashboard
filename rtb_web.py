@@ -3944,8 +3944,8 @@ def render_index() -> str:
     // ─── Cobranza ─────────────────────────────────────────────────────────────
 
     const COBRANZA_TIPO_PAGO_COLORS = ['#276f86','#159895','#e07b39','#9b59b6','#d0b56b','#d96058','#2ecc71','#3498db','#e74c3c','#95a5a6'];
-    // Verde rápido → rojo lento (orden: Mismo día, 1-3, 4-7, 8-15, 16-30, >30)
-    const DIAS_COBRO_COLORS = ['#27ae60','#2ecc71','#f1c40f','#e67e22','#d35400','#c0392b'];
+    // Paleta del tema: azules y dorados
+    const DIAS_COBRO_COLORS = ['#57c5b6','#159895','#276f86','#8a6f35','#c6ad6a','#d0b56b'];
     let cobranzaDiasChart = { slices: [], activeIndex: null };
 
     function renderCobranzaTipoPagoPie(activeIndex = null) {
@@ -4254,12 +4254,18 @@ def render_index() -> str:
       const rangos = diasCobro?.rangos || [];
       const n = Number(stats.n || 0);
       if (!n) { cobranzaDiasSection.hidden = true; return; }
-      cobranzaDiasKpis.innerHTML = `
-        <div class="kpi-inline">${metric('Promedio', formatNumber(stats.avg) + ' días', 'Días promedio de cobranza')}</div>
-        <div class="kpi-inline">${metric('Mediana', formatNumber(stats.med) + ' días', 'La mitad cobra en menos de este tiempo')}</div>
-        <div class="kpi-inline">${metric('Máximo', formatNumber(stats.max) + ' días', 'Cobro con mayor lag')}</div>
-        <div class="kpi-inline">${metric('Con dato', formatNumber(n), 'Cobros con fecha de asociación')}</div>
-      `;
+      cobranzaDiasKpis.innerHTML = [
+        { label: 'Promedio',  value: `${formatNumber(stats.avg)} días`, desc: 'Días promedio de cobranza',            color: '#276f86' },
+        { label: 'Mediana',   value: `${formatNumber(stats.med)} días`, desc: 'La mitad cobra en menos de este tiempo', color: '#159895' },
+        { label: 'Máximo',    value: `${formatNumber(stats.max)} días`, desc: 'Cobro con mayor lag',                  color: '#8a6f35' },
+        { label: 'Con dato',  value: formatNumber(n),                   desc: 'Cobros con fecha de asociación',       color: '#5b6673' },
+      ].map((k) => `
+        <div class="tiempos-kpi" style="border-left-color:${k.color}">
+          <strong style="color:${k.color}">${escapeHtml(k.value)}</strong>
+          <span>${escapeHtml(k.label)}</span>
+          <p style="margin:4px 0 0;font-size:10px;color:#5b6673;line-height:1.3">${escapeHtml(k.desc)}</p>
+        </div>
+      `).join('');
       // Tabla
       cobranzaDiasRangosRows.innerHTML = rangos.map((r, index) => {
         const color = DIAS_COBRO_COLORS[index % DIAS_COBRO_COLORS.length];
