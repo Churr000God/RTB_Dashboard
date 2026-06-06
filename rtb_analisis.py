@@ -64,8 +64,13 @@ def read_csv(path):
     with open(path, newline='', encoding='utf-8-sig') as fh:
         return list(csv.DictReader(fh))
 
-def prov_name(name):
-    return re.sub(r'\s*[-–]\s*[FMA]\s*\d+.*$','',str(name)).strip()
+def prov_name(name, invoice_number=""):
+    value = str(name or "").strip()
+    invoice = str(invoice_number or "").strip()
+    if invoice:
+        value = re.sub(r"\s*[-–]\s*" + re.escape(invoice) + r"\s*$", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s*[-–]\s*[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\s*$", "", value, flags=re.IGNORECASE)
+    return re.sub(r"\s*[-–]\s*[FMA]\s*\d+.*$", "", value).strip()
 
 
 def find_latest_csv(data_dir, prefix):
@@ -929,6 +934,62 @@ def _norm_anticipo_row(row):
     }
 
 
+def _decorate_compras_temporal(temporal, rows, fecha_hasta=None):
+    parsed = sorted(dt for dt in (parse_date(row.get("fecha")) for row in rows) if dt)
+    periods = temporal.get("periodos", [])
+    if not parsed or not periods:
+        for period in periods:
+            period["coverage"] = "sin_cobertura"
+        temporal["tendencias"] = {}
+        temporal["trend_keys"] = []
+        return {}
+
+    granularity = temporal.get("granularidad", "semana")
+    first_key = temporal_key(parsed[0], granularity)
+    last_key = temporal_key(parsed[-1], granularity)
+    keys = temporal.get("keys", [])
+    first_index = keys.index(first_key) if first_key in keys else 0
+    last_index = keys.index(last_key) if last_key in keys else len(keys) - 1
+    requested_end = parse_date(fecha_hasta)
+    last_is_partial = bool(requested_end and parsed[-1].date() < requested_end.date())
+
+    for index, period in enumerate(periods):
+        if index < first_index or index > last_index:
+            period["coverage"] = "sin_cobertura"
+        elif index == last_index and last_is_partial:
+            period["coverage"] = "parcial"
+        else:
+            period["coverage"] = "completo"
+
+    complete = [period for period in periods if period["coverage"] == "completo"]
+    temporal["trend_keys"] = [period["key"] for period in complete]
+    temporal["tendencias"] = ({
+        "n": linear_trend([period["n"] for period in complete]),
+        "sub": linear_trend([period["sub"] for period in complete]),
+        "tot": linear_trend([period["tot"] for period in complete]),
+    } if len(complete) >= 2 else {})
+    if len(complete) < 2:
+        return {}
+
+    previous, current = complete[-2:]
+    amount_change = ((current["tot"] - previous["tot"]) / previous["tot"]
+                     if previous["tot"] else None)
+    quantity_change = ((current["n"] - previous["n"]) / previous["n"]
+                       if previous["n"] else None)
+    return {
+        "previous_key": previous["key"],
+        "previous_label": previous["etiqueta"],
+        "current_key": current["key"],
+        "current_label": current["etiqueta"],
+        "previous_amount": previous["tot"],
+        "current_amount": current["tot"],
+        "amount_change_pct": amount_change,
+        "previous_quantity": previous["n"],
+        "current_quantity": current["n"],
+        "quantity_change_pct": quantity_change,
+    }
+
+
 def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
     _s = parse_date(fecha_desde)
     _e = parse_date(fecha_hasta)
@@ -967,6 +1028,7 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
     iva_real_fc = round(sub_fc * 0.16, 2)
     iva_diff_fc = round(iva_fc - iva_real_fc, 2)
     iva_diff_pct_fc = (iva_diff_fc / iva_real_fc) if iva_real_fc else 0
+    iva_alerta = abs(iva_diff_fc) > 100 and abs(iva_diff_pct_fc) > 0.02
 
     # Canceladas (métrica de control de calidad)
     n_canc   = len(fc_canc)
@@ -988,11 +1050,20 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
     # Top 10 proveedores (solo facturas activas)
     prov_fc = defaultdict(lambda: {"n": 0, "sub": 0.0, "tot": 0.0})
     for r in fc_active:
-        p = prov_name(r["nombre"])
+        p = prov_name(r["nombre"], r.get("numero", ""))
         prov_fc[p]["n"] += 1
         prov_fc[p]["sub"] += r["sub"]
         prov_fc[p]["tot"] += r["tot"]
     top_prov = sorted(prov_fc.items(), key=lambda x: -x[1]["tot"])[:10]
+    top_prov_rows = [
+        {"proveedor": name, **values, "pct": values["tot"] / tot_fc if tot_fc else 0}
+        for name, values in top_prov
+    ]
+    concentration = {
+        "top_provider": top_prov_rows[0]["proveedor"] if top_prov_rows else "",
+        "top1_pct": top_prov_rows[0]["pct"] if top_prov_rows else 0,
+        "top5_pct": sum(row["tot"] for row in top_prov_rows[:5]) / tot_fc if tot_fc else 0,
+    }
 
     # Uso de CFDI (solo facturas activas)
     cfdi_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
@@ -1012,12 +1083,7 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
     )
-    periods = temporal["periodos"]
-    temporal["tendencias"] = {
-        "n":   linear_trend([p["n"]   for p in periods]),
-        "sub": linear_trend([p["sub"] for p in periods]),
-        "tot": linear_trend([p["tot"] for p in periods]),
-    }
+    comparison = _decorate_compras_temporal(temporal, fc_active, fecha_hasta)
 
     # ─── Anticipos ──────────────────────────────────────────────────────────
     ant_all_norm = [_norm_anticipo_row(r) for r in (anticipos or [])]
@@ -1112,9 +1178,22 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
             "iva_real_fc": iva_real_fc,
             "iva_diff_fc": iva_diff_fc,
             "iva_diff_pct_fc": iva_diff_pct_fc,
+            "iva_alerta": iva_alerta,
             "tot_fc": tot_fc,
             "n_canc": n_canc,
             "tot_canc": tot_canc,
+        },
+        "management": {
+            "documented": {
+                "count": n_fc + n_ant_pendientes,
+                "amount": round(tot_fc + monto_pendientes, 2),
+                "invoice_count": n_fc,
+                "invoice_amount": tot_fc,
+                "pending_advance_count": n_ant_pendientes,
+                "pending_advance_amount": monto_pendientes,
+            },
+            "comparison": comparison,
+            "concentration": concentration,
         },
         "series": {
             "temporal": temporal,
@@ -1126,7 +1205,7 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
             ),
         },
         "tables": {
-            "top_proveedores": [{"proveedor": k, **v} for k, v in top_prov],
+            "top_proveedores": top_prov_rows,
         },
         "anticipos": {
             "kpis": {
@@ -1861,7 +1940,7 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
         prov_data[p]["m"] += r["total"]
     top_proveedores = [
         {"proveedor": k, "n": v["n"], "m": round(v["m"], 2)}
-        for k, v in sorted(prov_data.items(), key=lambda x: -x[1]["m"])[:15]
+        for k, v in sorted(prov_data.items(), key=lambda x: -x[1]["m"])[:10]
     ]
 
     # Serie temporal

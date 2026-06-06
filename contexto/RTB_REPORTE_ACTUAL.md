@@ -237,11 +237,15 @@ desglose "Estado de la factura" para visibilidad.
 | `kpis.tot_fc` | Total c/IVA del periodo |
 | `kpis.n_canc` | Facturas canceladas |
 | `kpis.tot_canc` | Monto cancelado |
+| `kpis.iva_alerta` | `true` solo si la diferencia supera simultaneamente $100 MXN y 2% del IVA teorico |
+| `management.documented` | Facturas activas mas anticipos pendientes, con componentes separados |
+| `management.comparison` | Variacion entre los dos ultimos periodos completos; excluye parciales y periodos sin cobertura |
+| `management.concentration` | Participacion del proveedor principal y del Top 5 |
 | `series.estado_factura` | Desglose por estado del CFDI (incluye canceladas) |
-| `series.tipo_pago` | Desglose por tipo de pago (excluye canceladas) |
+| `series.tipo_compra` | Desglose por tipo de compra (excluye canceladas) |
 | `series.uso_cfdi` | Desglose por uso de CFDI (excluye canceladas) |
-| `series.temporal` | Comportamiento temporal (excluye canceladas) |
-| `tables.top_proveedores` | Top 10 proveedores por monto (excluye canceladas) |
+| `series.temporal` | Comportamiento temporal con `coverage`: `completo`, `parcial` o `sin_cobertura` |
+| `tables.top_proveedores` | Top 10 proveedores consolidados por monto, con `pct` sobre compras activas |
 
 
 ## Modulo Cobranza

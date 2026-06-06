@@ -105,6 +105,72 @@ class TestBuildComprasDashboard(unittest.TestCase):
         self.assertEqual(total_tp, 3)
 
 
+    def test_alerta_iva_exige_monto_y_porcentaje_material(self):
+        leve = build_compras_dashboard([
+            _fc("F1", 1160.50, "2026-05-10", subtotal=1000, iva=160.50),
+        ], fecha_desde="2026-05-01", fecha_hasta="2026-05-31")
+        material = build_compras_dashboard([
+            _fc("F1", 1261, "2026-05-10", subtotal=1000, iva=261),
+        ], fecha_desde="2026-05-01", fecha_hasta="2026-05-31")
+        self.assertFalse(leve["kpis"]["iva_alerta"])
+        self.assertTrue(material["kpis"]["iva_alerta"])
+
+
+class TestComprasGerencial(unittest.TestCase):
+    def test_periodos_fuera_de_cobertura_no_participan_en_tendencia(self):
+        rows = [_fc("M1", 1160, "2026-05-10"), _fc("M2", 2320, "2026-06-03")]
+        result = build_compras_dashboard(rows, fecha_desde="2026-01-01", fecha_hasta="2026-12-31")
+        periods = {p["key"]: p for p in result["series"]["temporal"]["periodos"]}
+        self.assertEqual(periods["2026-04"]["coverage"], "sin_cobertura")
+        self.assertEqual(periods["2026-05"]["coverage"], "completo")
+        self.assertEqual(periods["2026-06"]["coverage"], "parcial")
+        self.assertEqual(periods["2026-07"]["coverage"], "sin_cobertura")
+        self.assertEqual(result["series"]["temporal"]["tendencias"], {})
+
+    def test_cero_entre_periodos_con_datos_es_cero_real(self):
+        rows = [_fc("A1", 1160, "2026-04-10"), _fc("C1", 3480, "2026-06-10")]
+        result = build_compras_dashboard(rows, fecha_desde="2026-04-01", fecha_hasta="2026-06-30")
+        periods = {p["key"]: p for p in result["series"]["temporal"]["periodos"]}
+        self.assertEqual(periods["2026-05"]["coverage"], "completo")
+        self.assertEqual(periods["2026-05"]["tot"], 0)
+
+    def test_compara_los_dos_ultimos_periodos_completos(self):
+        rows = [
+            _fc("A1", 1160, "2026-04-10"),
+            _fc("B1", 1740, "2026-05-10"),
+            _fc("B2", 1740, "2026-05-20"),
+            _fc("C1", 9999, "2026-06-03"),
+        ]
+        result = build_compras_dashboard(rows, fecha_desde="2026-04-01", fecha_hasta="2026-06-30")
+        comparison = result["management"]["comparison"]
+        self.assertEqual(comparison["previous_key"], "2026-04")
+        self.assertEqual(comparison["current_key"], "2026-05")
+        self.assertAlmostEqual(comparison["amount_change_pct"], 2.0, places=4)
+        self.assertAlmostEqual(comparison["quantity_change_pct"], 1.0, places=4)
+
+    def test_consolida_proveedor_por_numero_factura_y_uuid(self):
+        rows = [
+            _fc("F 100", 1160, "2026-05-10"),
+            _fc("7CFD9F18-1234-5678-9012-123456789ABC", 2320, "2026-05-11"),
+        ]
+        rows[0]["Factura_compra_nombre"] = "PROVEEDOR UNO - F 100"
+        rows[1]["Factura_compra_nombre"] = "PROVEEDOR UNO - 7CFD9F18-1234-5678-9012-123456789ABC"
+        result = build_compras_dashboard(rows, fecha_desde="2026-05-01", fecha_hasta="2026-05-31")
+        self.assertEqual(result["tables"]["top_proveedores"][0]["proveedor"], "PROVEEDOR UNO")
+        self.assertEqual(result["tables"]["top_proveedores"][0]["n"], 2)
+
+    def test_concentracion_expone_top_uno_y_top_cinco(self):
+        rows = [_fc("A", 5000, "2026-05-10"), _fc("B", 3000, "2026-05-11"), _fc("C", 2000, "2026-05-12")]
+        for row, provider in zip(rows, ["Proveedor A", "Proveedor B", "Proveedor C"]):
+            row["Factura_compra_nombre"] = provider
+        result = build_compras_dashboard(rows, fecha_desde="2026-05-01", fecha_hasta="2026-05-31")
+        concentration = result["management"]["concentration"]
+        self.assertEqual(concentration["top_provider"], "Proveedor A")
+        self.assertAlmostEqual(concentration["top1_pct"], 0.5, places=4)
+        self.assertAlmostEqual(concentration["top5_pct"], 1.0, places=4)
+        self.assertAlmostEqual(result["tables"]["top_proveedores"][0]["pct"], 0.5, places=4)
+
+
 def _fc(numero, total, fecha, estado="Facturada", anticipos="[]", subtotal=None, iva=None):
     sub = total / 1.16 if subtotal is None else subtotal
     iv = total - sub if iva is None else iva

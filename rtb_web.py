@@ -41,7 +41,7 @@ PAGOS_PROVEEDORES_SNAPSHOT_FILENAME = "pagos_proveedores_latest.json"
 GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
 FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
-CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "300"))
+CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "600"))
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
 
 
@@ -703,6 +703,42 @@ def render_index() -> str:
     .canvas { min-height: calc(100vh - 104px); border: 1px dashed #c8d2dc; border-radius: 10px; background: var(--paper); padding: 16px; }
     .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden], .finanzas-panel[hidden] { display: none; }
     .compras-panel { display: grid; gap: 14px; }
+    .compras-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .compras-risk-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .compras-risk-item { min-width: 0; border: 1px solid #d8e3ea; border-radius: 8px; background: #f5f8fa; padding: 11px 12px; display: grid; gap: 3px; }
+    .compras-risk-item strong { color: var(--ink); font-size: 17px; }
+    .compras-risk-item span { color: var(--muted); font-size: 11px; font-weight: 760; text-transform: uppercase; letter-spacing: .35px; }
+    .compras-risk-item small { color: #65717e; font-size: 11px; }
+    .compras-risk-item.warning { border-color: #ead7a2; background: #fff8e6; }
+    .compras-risk-item.risk { border-color: rgba(217,96,88,.38); background: #fff5f4; }
+    #comprasTemporalSection .section-body { grid-template-columns: 1fr; }
+    #comprasTemporalSection .section-body > div:last-child { order: -1; }
+    #comprasAnticiposSection .section-body { grid-template-columns: 1fr; }
+    #comprasAnticiposSection .section-body > div:last-child { order: -1; }
+    .compras-composition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .compras-composition .section-body { display: none; }
+    .composition-bars { display: grid; gap: 10px; }
+    .composition-row { display: grid; gap: 5px; }
+    .composition-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; font-size: 12px; }
+    .composition-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .composition-meta span { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .composition-track { height: 8px; border-radius: 999px; background: #e5edf2; overflow: hidden; }
+    .composition-fill { height: 100%; border-radius: inherit; background: var(--primary); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .coverage-partial { color: #805d18; font-weight: 760; }
+    .coverage-missing { color: #8a96a3; }
+    .composition-row:focus-visible { outline: 3px solid rgba(21,152,149,.28); outline-offset: 3px; border-radius: 4px; }
+    .compras-panel .pill.error { color: #963f39; background: #fff1ef; border-color: rgba(217,96,88,.42); }
+    .compras-panel .pill.success { color: #17685e; background: #eaf8f5; border-color: rgba(21,152,149,.36); }
+    @media (max-width: 760px) {
+      #comprasAnticiposTable thead { display: none; }
+      #comprasAnticiposTable, #comprasAnticiposTable tbody, #comprasAnticiposTable tr, #comprasAnticiposTable td { display: block; width: 100%; }
+      #comprasAnticiposTable tr { border-bottom: 1px solid #d8e3ea; padding: 8px 0; }
+      #comprasAnticiposTable td { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(0, 1.2fr); gap: 10px; white-space: normal; text-align: left; border: 0; padding: 5px 2px; }
+      #comprasAnticiposTable td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .35px; }
+    }
+    @media (max-width: 920px) { .compras-kpi-grid, .compras-risk-strip, .compras-composition-grid { grid-template-columns: 1fr; } }
+    #gastosTopProveedoresChart, #gastosTarjetaChart { max-width: 860px; }
     .cobranza-panel { display: grid; gap: 14px; }
     .cobranza-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .cobranza-kpi-grid > .kpi-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
@@ -1166,6 +1202,7 @@ def render_index() -> str:
           <div class="kpi-grid compras-kpi-grid" id="comprasKpiGrid">
             <p class="panel-state">Cargando compras...</p>
           </div>
+          <div class="compras-risk-strip" id="comprasRiskStrip" aria-label="Riesgos gerenciales de compras"></div>
 
           <section class="status-section" id="comprasTemporalSection" hidden>
             <h2 class="section-title" id="comprasTemporalTitle">Comportamiento temporal</h2>
@@ -1193,6 +1230,7 @@ def render_index() -> str:
           <section class="status-section" id="comprasAnticiposSection" hidden>
             <h2 class="section-title">Facturas de anticipo</h2>
             <p class="section-subtitle">Pagos anticipados a proveedores por mes de emisión. Rojo: monto pendiente de vincular. Azul: monto vinculado a una factura definitiva. A medida que crece el azul, disminuye el rojo.</p>
+            <div class="compras-risk-strip" id="comprasAnticiposStats"></div>
             <div class="section-body">
               <div class="table-wrap">
                 <table class="data-table" id="comprasAnticiposTable">
@@ -1222,7 +1260,7 @@ def render_index() -> str:
               </div>
               <div>
                 <div class="pie-chart-wrap">
-                  <canvas id="comprasStatusPie" width="520" height="520" aria-label="Estado de pago compras" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+                  <canvas id="comprasStatusPie" width="520" height="520" aria-label="Estado de facturas de compra" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
                   <div class="pie-center" id="comprasStatusPieCenter"></div>
                 </div>
                 <div class="pie-tooltip" id="comprasStatusTooltip" hidden></div>
@@ -1238,9 +1276,11 @@ def render_index() -> str:
             <div class="chart-tooltip" id="comprasProvTooltip" hidden></div>
           </section>
 
-          <section class="status-section" id="comprasTipoSection" hidden>
+          <div class="compras-composition-grid">
+          <section class="status-section compras-composition" id="comprasTipoSection" hidden>
             <h2 class="section-title">Tipo de compra</h2>
-            <p class="section-subtitle">Distribucion de facturas por tipo de compra.</p>
+            <p class="section-subtitle">Participación por monto, ordenada de mayor a menor.</p>
+            <div class="composition-bars" id="comprasTipoBars"></div>
             <div class="section-body pie-layout">
               <div class="table-wrap">
                 <table class="data-table">
@@ -1259,9 +1299,10 @@ def render_index() -> str:
             </div>
           </section>
 
-          <section class="status-section" id="comprasCfdiSection" hidden>
+          <section class="status-section compras-composition" id="comprasCfdiSection" hidden>
             <h2 class="section-title">Uso de CFDI</h2>
-            <p class="section-subtitle">Distribucion de facturas por tipo de uso de CFDI.</p>
+            <p class="section-subtitle">Participación fiscal por monto, ordenada de mayor a menor.</p>
+            <div class="composition-bars" id="comprasCfdiBars"></div>
             <div class="section-body pie-layout">
               <div class="table-wrap">
                 <table class="data-table">
@@ -1279,6 +1320,7 @@ def render_index() -> str:
               </div>
             </div>
           </section>
+          </div>
         </section>
 
         <section id="cobranzaPanel" class="cobranza-panel" aria-label="Cobros de pedidos de ventas" hidden>
@@ -1362,39 +1404,6 @@ def render_index() -> str:
           </section>
           </div>
 
-          <section class="status-section" id="cobranzaPendientesSection" hidden>
-            <h2 class="section-title">Cartera al cierre</h2>
-            <p class="section-subtitle">Antigüedad desde la aprobación hasta la fecha final seleccionada. La tabla prioriza los registros más antiguos y, después, el mayor monto.</p>
-            <div class="section-body">
-              <div>
-                <div class="weekly-chart-wrap">
-                  <div class="chart-view-toggle">
-                    <button class="chart-view-btn active" id="cobranzaPendientesVistaMonto" type="button">Monto</button>
-                    <button class="chart-view-btn" id="cobranzaPendientesVistaCantidad" type="button">Cantidad</button>
-                  </div>
-                  <canvas class="weekly-chart" id="cobranzaPendientesChart" width="760" height="300" aria-label="Cotizaciones pendientes de cobro por periodo de aprobación"></canvas>
-                  <div class="chart-tooltip" id="cobranzaPendientesTooltip" hidden></div>
-                </div>
-              </div>
-              <div class="table-wrap" style="margin-top:16px">
-                <table class="data-table">
-                  <thead><tr><th>Cotización</th><th>Cliente</th><th>Monto</th><th>Aprobada</th><th>Días</th><th>Rango</th><th>PO</th></tr></thead>
-                  <tbody id="cobranzaPendientesRows"></tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <details class="status-section cobranza-quality" id="cobranzaSinFacturaSection" hidden>
-            <summary>Calidad de captura: cobros sin fecha de asociación</summary>
-            <p class="section-subtitle">Estos registros no permiten calcular los días de cobranza. Corrige la Fecha de Asociacion en Notion.</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Nombre del pedido</th><th>Cliente</th><th># Factura</th><th>Tipo pago</th><th>Monto</th><th>Fecha pago</th></tr></thead>
-                <tbody id="cobranzaSinFacturaRows"></tbody>
-              </table>
-            </div>
-          </details>
         </section>
 
         <section id="pagos_proveedoresPanel" class="pagos_proveedores-panel" aria-label="Pagos a proveedores" hidden>
@@ -1473,14 +1482,27 @@ def render_index() -> str:
           <section class="status-section" id="gastosCategoriaSection" hidden>
             <h2 class="section-title">Distribución por categoría</h2>
             <p class="section-subtitle">Gasto total agrupado por categoría operativa.</p>
-            <div class="section-body pie-layout">
-              <canvas id="gastosCategoriaTableCanvas" style="width:100%;display:block"></canvas>
-              <div>
-                <div class="pie-chart-wrap">
-                  <canvas id="gastosCategoriaPie" width="520" height="520" aria-label="Categorías de gastos operativos" style="width:100%;height:100%;display:block;cursor:pointer"></canvas>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead>
+                    <tr>
+                      <th>Categoría</th>
+                      <th>Qty</th>
+                      <th>Monto</th>
+                      <th>% monto</th>
+                    </tr>
+                  </thead>
+                  <tbody id="gastosCategoriaRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="gastosCategoriaPie" width="520" height="520" aria-label="Categorías de gastos operativos"></canvas>
+                  <div class="pie-center" id="gastosCategoriaPieCenter"><strong>100%</strong><span>Monto</span></div>
                 </div>
-                <div class="pie-tooltip" id="gastosCategoriaTooltip" hidden></div>
-                <canvas id="gastosCategoriaPieLegend" style="width:100%;display:block;margin-top:8px"></canvas>
+                <div class="chart-tooltip" id="gastosCategoriaTooltip" hidden></div>
+                <div class="pie-legend" id="gastosCategoriaLegend"></div>
               </div>
             </div>
           </section>
@@ -1611,7 +1633,10 @@ def render_index() -> str:
     const cicloTemporalTooltip = document.querySelector('#cicloTemporalTooltip');
     const facturacionAlerts = document.querySelector('#facturacionAlerts');
     const comprasPanel = document.querySelector('#comprasPanel');
-    const comprasKpiGrid = document.querySelector('#comprasKpiGrid');
+    const comprasKpiGrid = document.querySelector("#comprasKpiGrid");
+    const comprasRiskStrip = document.querySelector("#comprasRiskStrip");
+    const comprasTipoBars = document.querySelector("#comprasTipoBars");
+    const comprasCfdiBars = document.querySelector("#comprasCfdiBars");
     const comprasTemporalSection = document.querySelector('#comprasTemporalSection');
     const comprasTemporalTitle = document.querySelector('#comprasTemporalTitle');
     const comprasTemporalSubtitle = document.querySelector('#comprasTemporalSubtitle');
@@ -1687,14 +1712,7 @@ def render_index() -> str:
     const cobranzaCreditoActivoSection = document.querySelector('#cobranzaCreditoActivoSection');
     const cobranzaCreditoActivoChart = document.querySelector('#cobranzaCreditoActivoChart');
     const cobranzaCreditoActivoTooltip = document.querySelector('#cobranzaCreditoActivoTooltip');
-    const cobranzaSinFacturaSection = document.querySelector('#cobranzaSinFacturaSection');
-    const cobranzaSinFacturaRows = document.querySelector('#cobranzaSinFacturaRows');
-    const cobranzaPendientesSection = document.querySelector('#cobranzaPendientesSection');
-    const cobranzaPendientesRows = document.querySelector('#cobranzaPendientesRows');
-    const cobranzaPendientesChart = document.querySelector('#cobranzaPendientesChart');
-    const cobranzaPendientesTooltip = document.querySelector('#cobranzaPendientesTooltip');
-    const cobranzaPendientesVistaMonto = document.querySelector('#cobranzaPendientesVistaMonto');
-    const cobranzaPendientesVistaCantidad = document.querySelector('#cobranzaPendientesVistaCantidad');
+
     const kpiGrid = document.querySelector('#kpiGrid');
     const estadoSection = document.querySelector('#estadoSection');
     const estadoRows = document.querySelector('#estadoRows');
@@ -1748,19 +1766,17 @@ def render_index() -> str:
     let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let comprasStatusChart = { slices: [], activeIndex: null };
     let comprasCfdiChart = { slices: [], activeIndex: null };
-    let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
+    let comprasTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, trendKeys: [], vista: 'monto' };
     let comprasAnticiposState = { rows: [], periodos: [], activeIndex: null, points: [] };
     let cobranzaTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
-    let cobranzaPendientesState = { rows: [], activeIndex: null, points: [], vista: 'monto' };
+
     let cobranzaTipoPagoChart = { slices: [], activeIndex: null };
     let pagosTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let pagosTipoPagoChart = { slices: [], activeIndex: null };
     let gastosTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
     let gastosCategoriaChart = { slices: [], activeIndex: null };
-    let gastosCategoriaTableData = [];
     let gastosFiscalGroupedState = {};
     let gastosTemporalTableDraw = null;
-    let gastosCategoriaTableDraw = null;
     let finanzasLoaded = false;
     let finanzasDevGroupedState = {};
     let finanzasCajaGroupedState = {};
@@ -3144,10 +3160,13 @@ def render_index() -> str:
       const labelField = opts.labelField || 'label';
       const maxM = Math.max(...data.map((d) => d[opts.barField] || 0), 1);
       canvas.style.height = totalH + 'px';
+      let _hBarBusy = false, _hBarRetries = 0;
       function draw() {
+        if (_hBarBusy) return;
         const W = canvas.offsetWidth;
-        if (!W) { requestAnimationFrame(draw); return; }
-        const dpr = window.devicePixelRatio || 1;
+        if (!W) { if (_hBarRetries++ < 30) requestAnimationFrame(draw); return; }
+        _hBarRetries = 0; _hBarBusy = true;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = W * dpr;
         canvas.height = totalH * dpr;
         const ctx = canvas.getContext('2d');
@@ -3191,6 +3210,7 @@ def render_index() -> str:
             ctx.fillText(valText, PAD_L + barW + 6, y + ROW_H / 2);
           }
         });
+        _hBarBusy = false;
       }
       draw();
       if (typeof ResizeObserver !== 'undefined') {
@@ -3221,12 +3241,15 @@ def render_index() -> str:
       if (!canvas) return;
       const ROW_H = 32, HEAD_H = 28, PAD_L = 12, PAD_R = 12, PAD_T = 0, PAD_B = 8;
       function totalH() { return PAD_T + HEAD_H + rows.length * ROW_H + PAD_B; }
+      let _tblBusy = false, _tblRetries = 0;
       function draw(activeRow) {
+        if (_tblBusy) return;
         const H = totalH();
         canvas.style.height = H + 'px';
         const W = canvas.offsetWidth;
-        if (!W) { requestAnimationFrame(() => draw(activeRow)); return; }
-        const dpr = window.devicePixelRatio || 1;
+        if (!W) { if (_tblRetries++ < 30) requestAnimationFrame(() => draw(activeRow)); return; }
+        _tblRetries = 0; _tblBusy = true;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = W * dpr;
         canvas.height = H * dpr;
         const ctx = canvas.getContext('2d');
@@ -3289,6 +3312,7 @@ def render_index() -> str:
             }
           });
         });
+        _tblBusy = false;
       }
       draw(opts.activeRow != null ? opts.activeRow : null);
       if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => draw(null)); ro.observe(canvas); }
@@ -3445,10 +3469,13 @@ def render_index() -> str:
     function drawPieLegendCanvas(canvas, slices, colors) {
       if (!canvas || !slices.length) return;
       const ITEM_H = 26, SWATCH_W = 12, SWATCH_H = 12, PAD = 8, GAP = 14;
+      let _legBusy = false, _legRetries = 0;
       function draw() {
+        if (_legBusy) return;
         const W = canvas.offsetWidth;
-        if (!W) { requestAnimationFrame(draw); return; }
-        const dpr = window.devicePixelRatio || 1;
+        if (!W) { if (_legRetries++ < 30) requestAnimationFrame(draw); return; }
+        _legRetries = 0; _legBusy = true;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         // First pass: compute rows needed
         const ctx = canvas.getContext('2d');
         ctx.font = '11px system-ui, sans-serif';
@@ -3477,6 +3504,7 @@ def render_index() -> str:
           ctx.fillText(s.label || '', xPos + SWATCH_W + 5, y + ITEM_H / 2);
           xPos += itemW;
         });
+        _legBusy = false;
       }
       draw();
       if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => draw()); ro.observe(canvas); }
@@ -4037,7 +4065,8 @@ def render_index() -> str:
       const pad = { left: 72, right: 24, top: 26, bottom: 46 };
       const plotW = width - pad.left - pad.right;
       const plotH = height - pad.top - pad.bottom;
-      const maxVal = Math.max(...rows.map((r) => r[valField]), 1);
+      const coveredRows = rows.filter((row) => row.coverage !== 'sin_cobertura');
+      const maxVal = Math.max(...coveredRows.map((r) => r[valField]), 1);
       const maxY = maxVal * 1.12;
       const slot = plotW / rows.length;
       const barW = Math.min(48, slot * 0.55);
@@ -4060,16 +4089,19 @@ def render_index() -> str:
 
       rows.forEach((row, index) => {
         const centerX = pad.left + slot * index + slot / 2;
-        const h = (row[valField] / maxY) * plotH;
+        const covered = row.coverage !== 'sin_cobertura';
+        const h = covered ? (row[valField] / maxY) * plotH : 0;
         const x = centerX - barW / 2;
         const y = pad.top + plotH - h;
         const isActive = activeIndex === index;
-        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.35;
-        drawRoundRect(ctx, x, y, barW, h, 5);
-        ctx.fillStyle = barColor;
-        ctx.fill();
+        ctx.globalAlpha = row.coverage === 'parcial' ? 0.62 : (activeIndex === null || isActive ? 1 : 0.35);
+        if (covered) {
+          drawRoundRect(ctx, x, y, barW, h, 5);
+          ctx.fillStyle = barColor;
+          ctx.fill();
+        }
         ctx.globalAlpha = 1;
-        ctx.fillStyle = isActive ? '#225e73' : '#65717e';
+        ctx.fillStyle = row.coverage === 'sin_cobertura' ? '#9aa5af' : (isActive ? '#225e73' : '#65717e');
         ctx.font = `${isActive ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
         ctx.fillText(row.etiqueta, centerX, pad.top + plotH + 14);
@@ -4077,11 +4109,15 @@ def render_index() -> str:
       });
 
       const tendencias = comprasTemporalState.tendencias;
-      if (tendencias && tendencias[trendKey] && rows.length > 1) {
+      const trendIndexes = comprasTemporalState.trendKeys
+        .map((key) => rows.findIndex((row) => row.key === key))
+        .filter((index) => index >= 0);
+      if (tendencias && tendencias[trendKey] && trendIndexes.length > 1) {
         const trend = tendencias[trendKey];
-        const n = rows.length;
-        const x0 = pad.left + slot / 2;
-        const xN = pad.left + slot * (n - 1) + slot / 2;
+        const firstIndex = trendIndexes[0];
+        const lastIndex = trendIndexes[trendIndexes.length - 1];
+        const x0 = pad.left + slot * firstIndex + slot / 2;
+        const xN = pad.left + slot * lastIndex + slot / 2;
         const yFromVal = (v) => pad.top + plotH - (v / maxY) * plotH;
         ctx.setLineDash([6, 4]);
         ctx.beginPath();
@@ -4115,7 +4151,7 @@ def render_index() -> str:
       ctx.fillStyle = '#65717e';
       ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText(esCantidad ? 'Barras: cantidad de facturas · Linea: tendencia' : 'Barras: total c/IVA · Linea: tendencia', pad.left, 8);
+      ctx.fillText(esCantidad ? 'Barras: facturas · Atenuado: periodo parcial' : 'Barras: total c/IVA · Atenuado: periodo parcial', pad.left, 8);
     }
 
     function setActiveComprasTemporal(index, event) {
@@ -4156,7 +4192,9 @@ def render_index() -> str:
       comprasTemporalHeading.textContent = mensual ? 'Mes' : 'Sem.';
       const periodos = temporal.periodos || [];
       const rows = periodos.map((p) => ({
+        key: p.key || '',
         etiqueta: p.etiqueta || '',
+        coverage: p.coverage || 'completo',
         n: Number(p.n || 0),
         sub: Number(p.sub || 0),
         tot: Number(p.tot || 0),
@@ -4164,9 +4202,10 @@ def render_index() -> str:
       if (!rows.length) { comprasTemporalSection.hidden = true; return; }
       comprasTemporalState.rows = rows;
       comprasTemporalState.tendencias = temporal.tendencias || null;
+      comprasTemporalState.trendKeys = temporal.trend_keys || [];
       comprasTemporalRows.innerHTML = rows.map((row, index) => `
-        <tr data-index="${index}">
-          <td><strong>${escapeHtml(row.etiqueta)}</strong></td>
+        <tr data-index="${index}" tabindex="0" class="${row.coverage === 'parcial' ? 'coverage-partial' : row.coverage === 'sin_cobertura' ? 'coverage-missing' : ''}">
+          <td><strong>${escapeHtml(row.etiqueta)}</strong>${row.coverage === 'parcial' ? ' · Parcial' : row.coverage === 'sin_cobertura' ? ' · Sin cobertura' : ''}</td>
           <td>${formatNumber(row.n)}</td>
           <td>${formatMoney(row.sub)}</td>
           <td>${formatMoney(row.tot)}</td>
@@ -4193,6 +4232,11 @@ def render_index() -> str:
       setActiveComprasTemporal(Number(row.dataset.index), event);
     });
     comprasTemporalRows.addEventListener('mouseleave', () => setActiveComprasTemporal(null));
+    comprasTemporalRows.addEventListener('focusin', (event) => {
+      const row = event.target.closest('tr');
+      if (row) setActiveComprasTemporal(Number(row.dataset.index));
+    });
+    comprasTemporalRows.addEventListener('focusout', () => setActiveComprasTemporal(null));
 
     function renderComprasProveedores(proveedores) {
       if (!proveedores || !proveedores.length) { comprasProvSection.hidden = true; return; }
@@ -4205,6 +4249,7 @@ def render_index() -> str:
           <div><span>Facturas</span><strong>${formatNumber(d.n)}</strong></div>
           <div><span>Subtotal</span><strong>${formatMoney(d.sub)}</strong></div>
           <div><span>Total c/IVA</span><strong>${formatMoney(d.tot)}</strong></div>
+          <div><span>Participación</span><strong>${formatPercent(d.pct || 0)}</strong></div>
         `,
       });
       comprasProvSection.hidden = false;
@@ -4281,6 +4326,7 @@ def render_index() -> str:
       const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
       const totalQty = rows.reduce((s, r) => s + Number(r.n || 0), 0);
       if (!rows.length || !totalMonto) { comprasTipoSection.hidden = true; return; }
+      renderCompositionBars(comprasTipoBars, rows, "tipo");
       comprasTipoRows.innerHTML = rows.map((row, index) => {
         const color = COMPRAS_TIPO_COLORS[index % COMPRAS_TIPO_COLORS.length];
         const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
@@ -4413,6 +4459,7 @@ def render_index() -> str:
       const totalMonto = rows.reduce((s, r) => s + Number(r.m || 0), 0);
       const totalQty = rows.reduce((s, r) => s + Number(r.n || 0), 0);
       if (!rows.length || !totalMonto) { comprasCfdiSection.hidden = true; return; }
+      renderCompositionBars(comprasCfdiBars, rows, "cfdi");
       comprasCfdiRows.innerHTML = rows.map((row, index) => {
         const color = COMPRAS_CFDI_COLORS[index % COMPRAS_CFDI_COLORS.length];
         const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
@@ -4467,74 +4514,86 @@ def render_index() -> str:
       comprasCfdiRows.addEventListener('mouseleave', () => setActiveComprasCfdi(null));
     }
 
+    function renderCompositionBars(container, rows, labelKey) {
+      if (!container) return;
+      const total = rows.reduce((sum, row) => sum + Number(row.m || 0), 0);
+      container.innerHTML = rows.map((row) => {
+        const pct = total ? Number(row.m || 0) / total : 0;
+        return `<div class="composition-row" tabindex="0">
+          <div class="composition-meta">
+            <strong title="${escapeHtml(row[labelKey] || '')}">${escapeHtml(row[labelKey] || 'Sin definir')}</strong>
+            <span>${formatNumber(row.n)} fact.</span>
+            <span>${formatPercent(pct)}</span>
+          </div>
+          <div class="composition-track" aria-hidden="true"><div class="composition-fill" style="width:${Math.max(1, pct * 100)}%"></div></div>
+          <span class="sr-only">${formatMoney(row.m)}</span>
+        </div>`;
+      }).join('');
+    }
+
     function renderCompras(body) {
       const kpis = body.kpis || {};
       const anticipos = body.anticipos || {};
       const antKpis = anticipos.kpis || {};
-      const nCanc = Number(kpis.n_canc || 0);
-      const cancClass = nCanc > 0 ? 'warning' : '';
-      const ivaDiff = Number(kpis.iva_diff_fc || 0);
-      const ivaDiffClass = Math.abs(ivaDiff) >= 1 ? 'warning' : 'accent';
-      const nAnt = Number(antKpis.n_ant || 0);
-      const nAntPend = Number(antKpis.n_ant_pendientes || 0);
-      const antPendClass = nAntPend > 0 ? 'warning' : '';
-      const nTotal = Number(kpis.n_fc || 0) + nAntPend;
-      const montoTotal = Number(kpis.tot_fc || 0) + Number(antKpis.monto_pendientes || 0);
+      const documented = body.management?.documented || {};
+      const comparison = body.management?.comparison || {};
+      const concentration = body.management?.concentration || {};
+      const hasComparison = comparison.amount_change_pct != null;
+      const amountDirection = hasComparison && comparison.amount_change_pct > 0 ? 'Subió' : 'Bajó';
+      const comparisonClass = hasComparison && comparison.amount_change_pct > 0 ? 'warning' : 'primary';
+      const comparisonValue = hasComparison ? formatPercent(Math.abs(comparison.amount_change_pct)) : '—';
+      const comparisonNote = hasComparison
+        ? `${escapeHtml(comparison.current_label)} vs ${escapeHtml(comparison.previous_label)}`
+        : 'Periodo parcial o sin dos periodos completos';
       const cards = [
         `<article class="kpi-card primary">
-          <h2>Facturas recibidas</h2>
+          <h2>Compras documentadas</h2>
           <div class="kpi-pair">
-            ${metric('Total facturas', kpiValue(kpis, 'n_fc', 'number'), 'Del periodo')}
-            ${metric('Total c/IVA', kpiValue(kpis, 'tot_fc', 'money'), 'Subtotal + IVA + Envio')}
+            ${metric('Monto total', formatMoney(documented.amount || 0), 'Facturas activas + anticipos pendientes')}
+            ${metric('Documentos', formatNumber(documented.count || 0), 'Facturas + anticipos pendientes')}
           </div>
-          ${metric('Subtotal', kpiValue(kpis, 'sub_fc', 'money'), 'Sin IVA ni envio')}
+          <div class="kpi-pair">
+            ${metric('Facturas activas', formatMoney(documented.invoice_amount || 0), formatNumber(documented.invoice_count || 0) + ' facturas')}
+            ${metric('Anticipos pendientes', formatMoney(documented.pending_advance_amount || 0), formatNumber(documented.pending_advance_count || 0) + ' anticipos')}
+          </div>
+        </article>`,
+        `<article class="kpi-card ${comparisonClass}">
+          <h2>Variación del periodo</h2>
+          <div class="kpi-pair">
+            ${metric(hasComparison ? amountDirection + ' en monto' : 'Variación monto', comparisonValue, comparisonNote)}
+            ${metric('Variación cantidad', comparison.quantity_change_pct == null ? '—' : formatPercent(comparison.quantity_change_pct), 'Solo periodos completos')}
+          </div>
+          <p class="kpi-note">Los periodos parciales y sin cobertura no participan.</p>
         </article>`,
         `<article class="kpi-card">
-          <h2>Total del periodo</h2>
+          <h2>Concentración</h2>
           <div class="kpi-pair">
-            ${metric('Total facturas', kpiValue({v: nTotal}, 'v', 'number'), 'Recibidas + anticipos pendientes')}
-            ${metric('Monto total', kpiValue({v: montoTotal}, 'v', 'money'), 'Facturas + anticipos pendientes')}
+            ${metric('Proveedor principal', formatPercent(concentration.top1_pct || 0), concentration.top_provider || 'Sin datos')}
+            ${metric('Top 5', formatPercent(concentration.top5_pct || 0), 'Participación sobre compras activas')}
           </div>
-          <div class="kpi-pair">
-            ${metric('Recibidas', kpiValue(kpis, 'n_fc', 'number'), 'Facturas definitivas')}
-            ${metric('Anticipos pendientes', kpiValue(antKpis, 'n_ant_pendientes', 'number'), 'Sin factura definitiva')}
-          </div>
-        </article>`,
-        `<article class="kpi-card ${ivaDiffClass}">
-          <h2>IVA acreditable</h2>
-          <div class="kpi-pair">
-            ${metric('IVA recibido', kpiValue(kpis, 'iva_fc', 'money'), 'Total − Subtotal − Envío')}
-            ${metric('IVA teórico (16%)', kpiValue(kpis, 'iva_real_fc', 'money'), 'Subtotal × 16%')}
-          </div>
-          <div class="kpi-pair">
-            ${metric('Diferencia', kpiValue(kpis, 'iva_diff_fc', 'money'), 'Recibido − teórico')}
-            ${metric('Diferencia %', kpiValue(kpis, 'iva_diff_pct_fc', 'percent'), 'Diferencia / IVA teórico')}
-          </div>
-        </article>`,
-        `<article class="kpi-card ${cancClass}">
-          <h2>Canceladas</h2>
-          <div class="kpi-pair">
-            ${metric('Facturas canceladas', kpiValue(kpis, 'n_canc', 'number'), 'Del periodo')}
-            ${metric('Monto cancelado', kpiValue(kpis, 'tot_canc', 'money'), 'Total c/IVA')}
-          </div>
-          <p class="kpi-note">Excluidas de los totales</p>
+          <p class="kpi-note">Una concentración alta aumenta dependencia de proveedores clave.</p>
         </article>`,
       ];
-      if (nAnt > 0) {
-        cards.push(`<article class="kpi-card ${antPendClass}">
-          <h2>Anticipos</h2>
-          <div class="kpi-pair">
-            ${metric('Anticipos del periodo', kpiValue(antKpis, 'n_ant', 'number'), 'Procesados por proveedor')}
-            ${metric('Monto anticipado', kpiValue(antKpis, 'monto_ant', 'money'), 'Total emitido')}
-          </div>
-          <div class="kpi-pair">
-            ${metric('Pendientes', kpiValue(antKpis, 'n_ant_pendientes', 'number'), 'Sin factura definitiva')}
-            ${metric('Monto pendiente', kpiValue(antKpis, 'monto_pendientes', 'money'), 'Por regularizar')}
-          </div>
-        </article>`);
-      }
       comprasKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
+
+      const ivaRisk = Boolean(kpis.iva_alerta);
+      const advanceRisk = Number(antKpis.n_ant_pendientes || 0) > 0;
+      const cancelRisk = Number(kpis.n_canc || 0) > 0;
+      comprasRiskStrip.innerHTML = `
+        <div class="compras-risk-item ${advanceRisk ? 'warning' : ''}">
+          <span>Anticipos pendientes</span><strong>${formatMoney(antKpis.monto_pendientes || 0)}</strong>
+          <small>${formatNumber(antKpis.n_ant_pendientes || 0)} por regularizar</small>
+        </div>
+        <div class="compras-risk-item ${ivaRisk ? 'risk' : ''}">
+          <span>Diferencia IVA</span><strong>${formatMoney(kpis.iva_diff_fc || 0)}</strong>
+          <small>${ivaRisk ? 'Supera $100 y 2% del IVA teórico' : 'Dentro del umbral de materialidad'}</small>
+        </div>
+        <div class="compras-risk-item ${cancelRisk ? 'warning' : ''}">
+          <span>Cancelaciones</span><strong>${formatMoney(kpis.tot_canc || 0)}</strong>
+          <small>${formatNumber(kpis.n_canc || 0)} excluidas de totales</small>
+        </div>`;
+
       renderComprasTemporal(body.series?.temporal);
       renderComprasAnticipos(anticipos);
       renderComprasStatus(body.series?.estado_factura || []);
@@ -4545,13 +4604,25 @@ def render_index() -> str:
 
     function renderComprasAnticipos(anticipos) {
       const kpis = anticipos?.kpis || {};
-      const tabla = anticipos?.tabla || [];
+      const tabla = [...(anticipos?.tabla || [])].sort((a, b) => Number(a.regularizado) - Number(b.regularizado) || String(b.fecha).localeCompare(String(a.fecha)));
       const temporal = anticipos?.temporal || { periodos: [] };
       if (!Number(kpis.n_ant || 0)) {
         comprasAnticiposSection.hidden = true;
         comprasAnticiposLegend.innerHTML = '';
+        comprasAnticiposStats.innerHTML = '';
         return;
       }
+      // Strip de conteos: Total / Asociados / Sin asociar
+      const _antStat = (n, m, label, cls) =>
+        `<div class="compras-risk-item${cls ? ' ' + cls : ''}">` +
+        `<strong>${Number(n || 0)}</strong>` +
+        `<span>${label}</span>` +
+        `<small>${formatMoney(Number(m || 0))}</small>` +
+        `</div>`;
+      comprasAnticiposStats.innerHTML =
+        _antStat(kpis.n_ant, kpis.monto_ant, 'Anticipos del periodo', '') +
+        _antStat(kpis.n_ant_regularizados, kpis.monto_regularizados, 'Asociados a factura', '') +
+        _antStat(kpis.n_ant_pendientes, kpis.monto_pendientes, 'Sin asociar', 'risk');
       comprasAnticiposState.rows = tabla.slice();
       comprasAnticiposState.periodos = (temporal.periodos || []).map((p) => ({
         key: p.key || '',
@@ -4569,12 +4640,12 @@ def render_index() -> str:
           ? `<strong>${escapeHtml(row.factura_asociada_numero || '—')}</strong>`
           : '—';
         return `<tr data-index="${index}">
-          <td>${escapeHtml(row.proveedor || '')}</td>
-          <td>${escapeHtml(row.numero_documento || '')}</td>
-          <td>${escapeHtml(row.fecha || '')}</td>
-          <td>${formatMoney(row.monto)}</td>
-          <td>${badge}</td>
-          <td>${factura}</td>
+          <td data-label="Proveedor">${escapeHtml(row.proveedor || '')}</td>
+          <td data-label="Documento">${escapeHtml(row.numero_documento || '')}</td>
+          <td data-label="Fecha">${escapeHtml(row.fecha || '')}</td>
+          <td data-label="Monto">${formatMoney(row.monto)}</td>
+          <td data-label="Estado">${badge}</td>
+          <td data-label="Factura asociada">${factura}</td>
         </tr>`;
       }).join('');
       comprasAnticiposLegend.innerHTML = `
@@ -5043,121 +5114,6 @@ def render_index() -> str:
       cobranzaCreditoActivoSection.hidden = false;
     }
 
-    function drawCobranzaPendientesChart(activeIndex) {
-      const rows = cobranzaPendientesState.rows;
-      if (!rows.length) { cobranzaPendientesState.points = []; return; }
-      const vista = cobranzaPendientesState.vista;
-      const values = rows.map((r) => vista === 'monto' ? r.monto : r.n);
-      const maxVal = Math.max(...values, 1);
-      const canvas = cobranzaPendientesChart;
-      const ctx = canvas.getContext('2d');
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = canvas.offsetWidth * dpr;
-      canvas.height = canvas.offsetHeight * dpr;
-      ctx.scale(dpr, dpr);
-      const W = canvas.offsetWidth, H = canvas.offsetHeight;
-      const pad = { top: 20, bottom: 36, left: 16, right: 16 };
-      const plotH = H - pad.top - pad.bottom;
-      const slot = (W - pad.left - pad.right) / rows.length;
-      const barW = Math.max(Math.min(slot * 0.65, 60), 8);
-      ctx.clearRect(0, 0, W, H);
-      cobranzaPendientesState.points = [];
-      rows.forEach((row, index) => {
-        const val = vista === 'monto' ? row.monto : row.n;
-        const isActive = activeIndex === index;
-        const barH = Math.max((val / maxVal) * plotH, 2);
-        const x = pad.left + slot * index + (slot - barW) / 2;
-        const y = pad.top + plotH - barH;
-        ctx.fillStyle = isActive ? '#c0392b' : '#e74c3c';
-        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.5;
-        drawRoundRect(ctx, x, y, barW, barH, 5);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = isActive ? '#1d5368' : '#65717e';
-        ctx.font = `${isActive ? 700 : 500} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        ctx.fillText(row.etiqueta, pad.left + slot * index + slot / 2, pad.top + plotH + 14);
-        cobranzaPendientesState.points.push({ x: pad.left + slot * index + slot / 2, slotLeft: pad.left + slot * index, slotRight: pad.left + slot * (index + 1), row, index });
-      });
-    }
-
-    function setActiveCobranzaPendientes(index, event) {
-      cobranzaPendientesState.activeIndex = index >= 0 ? index : null;
-      drawCobranzaPendientesChart(cobranzaPendientesState.activeIndex);
-      cobranzaPendientesRows.querySelectorAll('tr').forEach((tr, i) => tr.classList.toggle('active', i === cobranzaPendientesState.activeIndex));
-      if (cobranzaPendientesState.activeIndex === null) { cobranzaPendientesTooltip.hidden = true; return; }
-      const row = cobranzaPendientesState.rows[cobranzaPendientesState.activeIndex];
-      if (!row) return;
-      if (event) placeTooltipNear(cobranzaPendientesTooltip, event.clientX, event.clientY);
-      cobranzaPendientesTooltip.innerHTML = `
-        <b>${escapeHtml(row.etiqueta)}</b>
-        <div><span>Cotizaciones</span><strong>${formatNumber(row.n)}</strong></div>
-        <div><span>Monto pendiente</span><strong>${formatMoney(row.monto)}</strong></div>
-      `;
-      cobranzaPendientesTooltip.hidden = false;
-    }
-
-    function renderCobranzaPendientes(antiguedad, tabla) {
-      const rows = (antiguedad || []).map((item) => ({
-        etiqueta: item.rango || '',
-        n: Number(item.n || 0),
-        monto: Number(item.monto || 0),
-      }));
-      if (!rows.some((row) => row.n > 0) && (!tabla || !tabla.length)) {
-        cobranzaPendientesSection.hidden = true;
-        return;
-      }
-      cobranzaPendientesState.rows = rows;
-      setActiveCobranzaPendientes(null);
-      cobranzaPendientesVistaMonto.onclick = () => {
-        cobranzaPendientesState.vista = 'monto';
-        cobranzaPendientesVistaMonto.classList.add('active');
-        cobranzaPendientesVistaCantidad.classList.remove('active');
-        drawCobranzaPendientesChart(null);
-      };
-      cobranzaPendientesVistaCantidad.onclick = () => {
-        cobranzaPendientesState.vista = 'cantidad';
-        cobranzaPendientesVistaCantidad.classList.add('active');
-        cobranzaPendientesVistaMonto.classList.remove('active');
-        drawCobranzaPendientesChart(null);
-      };
-      cobranzaPendientesChart.onmousemove = (event) => {
-        const rect = cobranzaPendientesChart.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const idx = cobranzaPendientesState.points.findIndex((point) => x >= point.slotLeft && x < point.slotRight);
-        if (idx >= 0) setActiveCobranzaPendientes(idx, event);
-        else setActiveCobranzaPendientes(null);
-      };
-      cobranzaPendientesChart.onmouseleave = () => setActiveCobranzaPendientes(null);
-      cobranzaPendientesRows.innerHTML = (tabla || []).map((row) => `
-        <tr>
-          <td>${escapeHtml(row.nombre || '')}</td>
-          <td>${escapeHtml(row.cliente || '—')}</td>
-          <td>${formatMoney(row.monto)}</td>
-          <td>${escapeHtml(row.fecha_aprobacion || '—')}</td>
-          <td>${row.dias_pendiente == null ? '—' : formatNumber(row.dias_pendiente)}</td>
-          <td><span class="aging-badge">${escapeHtml(row.rango_antiguedad || 'Sin fecha')}</span></td>
-          <td>${escapeHtml(row.po || '—')}</td>
-        </tr>
-      `).join('') || '<tr><td colspan="7">Sin cartera pendiente al cierre.</td></tr>';
-      cobranzaPendientesSection.hidden = false;
-    }
-
-    function renderCobranzaSinFactura(cobros) {
-      const sinFact = (cobros || []).filter((r) => !r.fecha_asociacion && r.tipo === 'principal');
-      if (!sinFact.length) { cobranzaSinFacturaSection.hidden = true; return; }
-      cobranzaSinFacturaRows.innerHTML = sinFact.map((r) => `
-        <tr>
-          <td>${escapeHtml(r.nombre || '')}</td>
-          <td>${escapeHtml(r.cliente || '—')}</td>
-          <td>${escapeHtml(r.factura || r.factura_raw || '—')}</td>
-          <td>${escapeHtml(r.tipo_pago || '')}</td>
-          <td>${r.monto != null ? formatMoney(r.monto) : '—'}</td>
-          <td>${escapeHtml(r.fecha_pago || '')}</td>
-        </tr>
-      `).join('') || '<tr><td colspan="6">Sin datos.</td></tr>';
-      cobranzaSinFacturaSection.hidden = false;
-    }
 
     function renderCobranza(body) {
       const kpis = body.kpis || {};
@@ -5209,8 +5165,6 @@ def render_index() -> str:
       renderCobranzaDias(body.series?.dias_cobro);
       renderCobranzaTopClientes(body.tables?.top_clientes || []);
       renderCobranzaCreditoActivo(body.tables?.top_clientes_pendientes || []);
-      renderCobranzaPendientes(body.series?.cartera_antiguedad || [], body.tables?.pendientes || []);
-      renderCobranzaSinFactura(body.tables?.cobros || []);
     }
 
     async function loadCobranza() {
@@ -5551,64 +5505,87 @@ def render_index() -> str:
       '#e8cf87',  // dorado claro (variante)
     ];
 
-    function renderGastosCategoriaPie(activeIndex = null) {
-      const canvas2 = document.querySelector('#gastosCategoriaPie');
-      if (!canvas2 || !gastosCategoriaChart.slices.length) return;
-      const ctx = canvas2.getContext('2d');
-      resizeCanvasToDisplay(canvas2, ctx);
-      const W = canvas2.width, H = canvas2.height;
-      const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 8, ri = r * 0.52;
-      ctx.clearRect(0, 0, W, H);
-      gastosCategoriaChart.slices.forEach((s, i) => {
-        ctx.beginPath(); ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, s.start, s.end);
+    function renderGastosCategoriaPieChart(activeIndex = null) {
+      const pie = document.querySelector('#gastosCategoriaPie');
+      if (!pie || !gastosCategoriaChart.slices.length) return;
+      const ctx = pie.getContext('2d');
+      const rect = pie.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      pie.width = Math.max(1, Math.round(rect.width * dpr));
+      pie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      gastosCategoriaChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
         ctx.closePath();
-        ctx.fillStyle = i === activeIndex ? GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length] + 'cc' : GASTOS_CAT_COLORS[i % GASTOS_CAT_COLORS.length];
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
         ctx.fill();
-        if (i === activeIndex) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
       });
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
-      // Draw center text in canvas (donut hole)
-      ctx.beginPath(); ctx.arc(cx, cy, ri - 2, 0, Math.PI * 2);
-      ctx.fillStyle = '#f4f7f9'; ctx.fill();
-      const pMainTxt = activeIndex !== null && gastosCategoriaChart.slices[activeIndex]
-        ? gastosCategoriaChart.slices[activeIndex].pct
-        : '100%';
-      const pSubTxt = activeIndex !== null && gastosCategoriaChart.slices[activeIndex]
-        ? gastosCategoriaChart.slices[activeIndex].label
-        : 'Monto';
-      ctx.fillStyle = '#1d2e36';
-      ctx.font = `bold 22px system-ui, sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(pMainTxt, cx, cy - 12);
-      ctx.fillStyle = '#65717e';
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText(pSubTxt.length > 10 ? pSubTxt.slice(0, 9) + '…' : pSubTxt, cx, cy + 12);
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
 
     function gastosCategoriaSliceAtEvent(event) {
-      const canvas2 = document.querySelector('#gastosCategoriaPie');
-      const rect = canvas2.getBoundingClientRect();
-      const x = event.clientX - rect.left - canvas2.offsetWidth / 2;
-      const y = event.clientY - rect.top - canvas2.offsetHeight / 2;
-      let angle = Math.atan2(y, x); if (angle < -Math.PI / 2) angle += 2 * Math.PI;
+      const pie = document.querySelector('#gastosCategoriaPie');
+      const rect = pie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
       return gastosCategoriaChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
     }
 
     function setActiveGastosCategoria(index, event) {
-      gastosCategoriaChart.activeIndex = index >= 0 ? index : null;
-      renderGastosCategoriaPie(gastosCategoriaChart.activeIndex);
-      // Highlight matching row in table canvas
-      if (typeof gastosCategoriaTableDraw === 'function') gastosCategoriaTableDraw(index >= 0 ? index : null);
+      const pieCenter = document.querySelector('#gastosCategoriaPieCenter');
+      const legend = document.querySelector('#gastosCategoriaLegend');
+      const tbody = document.querySelector('#gastosCategoriaRows');
       const tooltip = document.querySelector('#gastosCategoriaTooltip');
+      gastosCategoriaChart.activeIndex = index >= 0 ? index : null;
+      renderGastosCategoriaPieChart(gastosCategoriaChart.activeIndex);
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
+      if (tbody) tbody.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === gastosCategoriaChart.activeIndex));
+      if (gastosCategoriaChart.activeIndex === null) {
+        if (tooltip) tooltip.hidden = true;
+        if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Monto</span>';
+        return;
+      }
+      const slice = gastosCategoriaChart.slices[gastosCategoriaChart.activeIndex];
+      if (pieCenter) pieCenter.innerHTML = `<strong>${slice.pct}</strong><span>${escapeHtml(slice.label.length > 10 ? slice.label.slice(0, 9) + '…' : slice.label)}</span>`;
       if (tooltip) {
-        if (index >= 0 && gastosCategoriaChart.slices[index]) {
-          const s = gastosCategoriaChart.slices[index];
-          tooltip.innerHTML = `<strong>${escapeHtml(s.label)}</strong><br>Monto: ${s.monto}<br>${s.pct}`;
-          tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
-        } else { tooltip.hidden = true; }
+        if (event) placeTooltipNear(tooltip, event.clientX, event.clientY);
+        tooltip.innerHTML = `
+          <b>${escapeHtml(slice.label)}</b>
+          <div><span>Monto</span><strong>${slice.monto}</strong></div>
+          <div><span>Qty</span><strong>${formatNumber(slice.n)}</strong></div>
+          <div><span>% monto</span><strong>${slice.pct}</strong></div>
+        `;
+        tooltip.hidden = false;
       }
     }
 
@@ -5617,43 +5594,78 @@ def render_index() -> str:
       if (!categoria || !categoria.length) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
       const total = categoria.reduce((s, t) => s + (t.m || 0), 0);
-      // Store for potential redraws
-      gastosCategoriaTableData = categoria;
-      // Build slices (needed by pie and table canvas)
-      let angle = -Math.PI / 2;
-      gastosCategoriaChart.slices = categoria.map((t, i) => {
-        const pct = total > 0 ? t.m / total : 0;
-        const sweep = pct * 2 * Math.PI;
-        const slice = { label: t.categoria, start: angle, end: angle + sweep, pct: (pct * 100).toFixed(1) + '%', n: t.n, monto: formatMoney(t.m) };
-        angle += sweep; return slice;
-      });
-      // Draw table canvas and store draw function for cross-highlight
-      const tableCv = document.querySelector('#gastosCategoriaTableCanvas');
-      if (tableCv) gastosCategoriaTableDraw = drawTableCanvas(tableCv, [
-        { title: 'Categoría', key: 'categoria', colorOf: (row, ri) => GASTOS_CAT_COLORS[ri % GASTOS_CAT_COLORS.length] },
-        { title: '#', key: 'n', align: 'right' },
-        { title: 'Monto', key: 'm', type: 'money', align: 'right' },
-        { title: '%', renderVal: (row) => (total > 0 ? ((row.m / total) * 100).toFixed(1) : '0') + '%', align: 'right' },
-      ], categoria);
-      renderGastosCategoriaPie();
-      // Draw legend canvas
-      const legCv = document.querySelector('#gastosCategoriaPieLegend');
-      if (legCv) drawPieLegendCanvas(legCv, gastosCategoriaChart.slices, GASTOS_CAT_COLORS);
-      const pie = document.querySelector('#gastosCategoriaPie');
-      const tooltip = document.querySelector('#gastosCategoriaTooltip');
-      if (pie) {
-        pie.addEventListener('mousemove', (e) => setActiveGastosCategoria(gastosCategoriaSliceAtEvent(e), e));
-        pie.addEventListener('mouseleave', () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; });
+      const rows = [...categoria].sort((a, b) => (b.m || 0) - (a.m || 0));
+
+      const tbody = document.querySelector('#gastosCategoriaRows');
+      if (tbody) {
+        tbody.innerHTML = rows.map((row, index) => {
+          const color = GASTOS_CAT_COLORS[index % GASTOS_CAT_COLORS.length];
+          const montoPct = total ? (row.m || 0) / total : 0;
+          return `
+            <tr data-index="${index}">
+              <td><span class="status-name" style="--status-color: ${color}"><span class="status-dot"></span>${escapeHtml(row.categoria)}</span></td>
+              <td>${formatNumber(row.n)}</td>
+              <td>${formatMoney(row.m)}</td>
+              <td>${formatPercent(montoPct)}</td>
+            </tr>
+          `;
+        }).join('');
       }
-      // Wire table canvas hover → highlight pie slice + chart row
-      if (tableCv) {
-        const TH = 28, TR = 32;
-        tableCv.onmousemove = (e) => {
-          const ri = Math.floor((e.clientY - tableCv.getBoundingClientRect().top - TH) / TR);
-          if (ri >= 0 && ri < categoria.length) setActiveGastosCategoria(ri, e);
-          else { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; }
+
+      let angle = -Math.PI / 2;
+      gastosCategoriaChart.slices = rows.map((row, index) => {
+        const pct = total > 0 ? (row.m || 0) / total : 0;
+        const sweep = pct * 2 * Math.PI;
+        const slice = {
+          label: row.categoria,
+          start: angle,
+          end: angle + sweep,
+          pct: (pct * 100).toFixed(1) + '%',
+          n: row.n,
+          monto: formatMoney(row.m),
+          color: GASTOS_CAT_COLORS[index % GASTOS_CAT_COLORS.length],
         };
-        tableCv.onmouseleave = () => { setActiveGastosCategoria(-1, {}); if (tooltip) tooltip.hidden = true; };
+        angle += sweep;
+        return slice;
+      });
+
+      const legend = document.querySelector('#gastosCategoriaLegend');
+      if (legend) {
+        legend.innerHTML = gastosCategoriaChart.slices.map((slice, index) => `
+          <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+            <span class="legend-swatch"></span>
+            <span>${escapeHtml(slice.label)}</span>
+            <strong>${slice.pct}</strong>
+          </button>
+        `).join('');
+      }
+
+      setActiveGastosCategoria(null);
+
+      const pie = document.querySelector('#gastosCategoriaPie');
+      if (pie) {
+        pie.addEventListener('mousemove', (event) => {
+          const index = gastosCategoriaSliceAtEvent(event);
+          if (index >= 0) setActiveGastosCategoria(index, event);
+          else setActiveGastosCategoria(null);
+        });
+        pie.addEventListener('mouseleave', () => setActiveGastosCategoria(null));
+      }
+      if (legend) {
+        legend.addEventListener('mousemove', (event) => {
+          const item = event.target.closest('.legend-item');
+          if (!item) return;
+          setActiveGastosCategoria(Number(item.dataset.index), event);
+        });
+        legend.addEventListener('mouseleave', () => setActiveGastosCategoria(null));
+      }
+      if (tbody) {
+        tbody.addEventListener('mousemove', (event) => {
+          const row = event.target.closest('tr');
+          if (!row) return;
+          setActiveGastosCategoria(Number(row.dataset.index), event);
+        });
+        tbody.addEventListener('mouseleave', () => setActiveGastosCategoria(null));
       }
     }
 
@@ -5661,33 +5673,81 @@ def render_index() -> str:
       const canvas2 = document.querySelector('#gastosTemporalChart');
       if (!canvas2 || !gastosTemporalState.rows.length) return;
       const ctx = canvas2.getContext('2d');
-      resizeCanvasToDisplay(canvas2, ctx);
-      const W = canvas2.width, H = canvas2.height, pad = { t: 20, r: 20, b: 40, l: 70 };
+      const rect = resizeCanvasToDisplay(canvas2, ctx);
+      const width = rect.width, height = rect.height;
+      ctx.clearRect(0, 0, width, height);
       const rows = gastosTemporalState.rows;
-      const vista = gastosTemporalState.vista;
-      const vals = rows.map((r) => vista === 'monto' ? (r.monto || 0) : (r.gastos || 0));
-      const maxV = Math.max(...vals, 1);
-      const barW = Math.max(4, ((W - pad.l - pad.r) / rows.length) * 0.6);
-      const step = (W - pad.l - pad.r) / rows.length;
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = '#f4f7f9'; ctx.fillRect(0, 0, W, H);
-      rows.forEach((row, i) => {
-        const val = vals[i];
-        const x = pad.l + i * step + step / 2;
-        const barH = (val / maxV) * (H - pad.t - pad.b);
-        const y = H - pad.b - barH;
-        const color = i === activeIndex ? '#d0b56b' : '#276f86';
-        ctx.fillStyle = color; drawRoundRect(ctx, x - barW / 2, y, barW, barH, 3); ctx.fill();
-        ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(row.etiqueta, x, H - pad.b + 14);
+      const esCantidad = gastosTemporalState.vista === 'cantidad';
+      const valField = esCantidad ? 'gastos' : 'monto';
+      const barColor = '#276f86';
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const maxVal = Math.max(...rows.map((r) => r[valField] || 0), 1);
+      const maxY = maxVal * 1.12;
+      const slot = plotW / rows.length;
+      const barW = Math.min(48, slot * 0.55);
+      const barTops = [];
+
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+
+      for (let i = 0; i <= 4; i++) {
+        const gy = pad.top + plotH * (i / 4);
+        ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(width - pad.right, gy); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#65717e';
+        const label = esCantidad
+          ? String(Math.round(maxY * (1 - i / 4)))
+          : formatMoney(maxY * (1 - i / 4)).replace('MXN', '').trim();
+        ctx.fillText(label, pad.left - 8, gy);
+      }
+
+      rows.forEach((row, index) => {
+        const centerX = pad.left + slot * index + slot / 2;
+        const val = row[valField] || 0;
+        const h = (val / maxY) * plotH;
+        const x = centerX - barW / 2;
+        const y = pad.top + plotH - h;
+        barTops.push({ x: centerX, y });
+        const isActive = activeIndex === index;
+        ctx.globalAlpha = (activeIndex === null || isActive) ? 1 : 0.35;
+        if (h > 0) {
+          drawRoundRect(ctx, x, y, barW, h, 5);
+          ctx.fillStyle = barColor;
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isActive ? '#1a4f65' : '#65717e';
+        ctx.font = `${isActive ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(row.etiqueta, centerX, pad.top + plotH + 14);
       });
-      ctx.fillStyle = '#5b6673'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-      [0, 0.5, 1].forEach((f) => {
-        const y = H - pad.b - f * (H - pad.t - pad.b);
-        const v = f * maxV;
-        ctx.fillText(vista === 'monto' ? formatMoney(v) : Math.round(v), pad.l - 6, y + 4);
+
+      barTops.forEach(({ x, y }, index) => {
+        const isActive = activeIndex === index;
+        ctx.beginPath();
+        ctx.arc(x, y, isActive ? 5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbfcfd'; ctx.fill();
+        ctx.lineWidth = isActive ? 4 : 2.5;
+        ctx.strokeStyle = barColor; ctx.stroke();
       });
-      gastosTemporalState.points = rows.map((_, i) => pad.l + i * step + step / 2);
+
+      if (activeIndex !== null && barTops[activeIndex]) {
+        const { x, y } = barTops[activeIndex];
+        ctx.beginPath();
+        ctx.arc(x, y, 13, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(39,111,134,.22)';
+        ctx.lineWidth = 6; ctx.stroke();
+      }
+
+      ctx.fillStyle = '#65717e';
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(esCantidad ? 'Barras: cantidad de gastos' : 'Barras: monto total de gastos', pad.left, 8);
+
+      gastosTemporalState.points = rows.map((_, i) => pad.left + slot * i + slot / 2);
     }
 
     function renderGastosTemporal(temporal) {
@@ -5779,6 +5839,16 @@ def render_index() -> str:
       });
     }
 
+    function _gastosReleaseCanvases() {
+      ['gastosTemporalChart','gastosTemporalTableCanvas',
+       'gastosCategoriaPie','gastosTopProveedoresChart',
+       'gastosTarjetaChart','gastosFiscalChart'].forEach(id => {
+        const cv = document.getElementById(id);
+        if (cv) { cv.width = 1; cv.height = 1; }
+      });
+    }
+
+    // PASO 1: solo KPI cards — descomentar secciones una por una para diagnosticar crash
     function renderGastosOperativos(body) {
       const kpis = body.kpis || {};
       const pctDed = kpis.pct_deducible ? (kpis.pct_deducible * 100).toFixed(1) + '%' : '0%';
@@ -5790,19 +5860,19 @@ def render_index() -> str:
       cards.push(`<article class="kpi-card ${rechStyle}"><h2>Gastos del periodo</h2><div class="kpi-pair">${metric('Realizados', formatNumber(kpis.n_gastos), 'Estado "Realizado"')}${metric(kpis.n_rechazados > 0 ? 'Rechazados' : 'Sin rechazados', formatNumber(kpis.n_rechazados), 'No suman al total')}</div></article>`);
       if (gastosOperativosKpiGrid) gastosOperativosKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
-      renderGastosTemporal(body.series?.temporal);
-      renderGastosCategoria(body.series?.categoria || []);
-      const topProvSection = document.querySelector('#gastosTopProveedoresSection');
+      renderGastosTemporal(body.series?.temporal); // PASO 2
+      renderGastosCategoria(body.series?.categoria || []); // PASO 3
+      const topProvSection = document.querySelector('#gastosTopProveedoresSection'); // PASO 4
       if (body.tables?.top_proveedores?.length) {
         if (topProvSection) topProvSection.hidden = false;
         renderHBarCanvas(document.querySelector('#gastosTopProveedoresChart'), document.querySelector('#gastosTopProveedoresTooltip'), body.tables.top_proveedores, { barField: 'm', labelField: 'proveedor', color: '#d0b56b', tooltipFn: (d) => `<strong>${escapeHtml(d.proveedor || '—')}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
       } else { if (topProvSection) topProvSection.hidden = true; }
-      const tarSection = document.querySelector('#gastosTarjetaSection');
+      const tarSection = document.querySelector('#gastosTarjetaSection'); // PASO 5
       if (body.series?.tarjeta?.length) {
         if (tarSection) tarSection.hidden = false;
         renderHBarCanvas(document.querySelector('#gastosTarjetaChart'), document.querySelector('#gastosTarjetaTooltip'), body.series.tarjeta, { barField: 'm', labelField: 'tarjeta', color: '#d0b56b', tooltipFn: (d) => `<strong>Tarjeta ${escapeHtml(d.tarjeta)}</strong><br>${formatMoney(d.m)}<br>${d.n} gasto(s)` });
       } else { if (tarSection) tarSection.hidden = true; }
-      renderGastosFiscal(body.tables, kpis);
+      renderGastosFiscal(body.tables, kpis); // PASO 6
     }
 
     async function loadGastosOperativos() {
@@ -5966,6 +6036,13 @@ def render_index() -> str:
     }
 
     function setActiveModule(moduleName) {
+      // Al salir de Gastos Operativos liberar buffers de canvas (~38MB) y
+      // permitir re-render limpio al volver (evita acumulación de memoria).
+      if (canvas.dataset.module === 'gastos_operativos' && moduleName !== 'gastos_operativos') {
+        _gastosReleaseCanvases();
+        gastosOperativosLoaded = false;
+        if (gastosOperativosKpiGrid) gastosOperativosKpiGrid.innerHTML = '<p class="panel-state">Cargando gastos operativos...</p>';
+      }
       canvas.dataset.module = moduleName;
       ventasPanel.hidden = moduleName !== 'ventas';
       facturacionPanel.hidden = moduleName !== 'facturacion';

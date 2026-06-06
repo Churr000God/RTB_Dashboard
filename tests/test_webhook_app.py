@@ -417,6 +417,21 @@ class WebhookContractTests(unittest.TestCase):
         self.assertIn("fetch('/api/dashboard/facturacion')", html)
 
 
+    def test_ui_compras_tiene_jerarquia_gerencial(self):
+        html = (Path(__file__).resolve().parents[1] / "rtb_web.py").read_text(encoding="utf-8")
+
+        self.assertIn("id=\"comprasRiskStrip\"", html)
+        self.assertIn("id=\"comprasTipoBars\"", html)
+        self.assertIn("id=\"comprasCfdiBars\"", html)
+        self.assertIn("Compras documentadas", html)
+        self.assertIn("Concentración", html)
+        self.assertIn("Periodo parcial", html)
+        self.assertIn("kpis.iva_alerta", html)
+        self.assertIn("management?.comparison", html)
+        self.assertIn("management?.concentration", html)
+        self.assertIn("Estado de facturas de compra", html)
+
+
 class ComprasAnticiposSnapshotTests(unittest.TestCase):
     FC_HEADER = (
         "Factura_compra_id,Factura_compra_nombre,Factura_compra_envio,"
