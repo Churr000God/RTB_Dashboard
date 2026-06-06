@@ -242,3 +242,40 @@ desglose "Estado de la factura" para visibilidad.
 | `series.uso_cfdi` | Desglose por uso de CFDI (excluye canceladas) |
 | `series.temporal` | Comportamiento temporal (excluye canceladas) |
 | `tables.top_proveedores` | Top 10 proveedores por monto (excluye canceladas) |
+
+
+## Modulo Cobranza
+
+La pestaña `Cobranza` consume `Pagos_Principlaes_Facturas_Ventas_*.csv`,
+`Pagos_Secundarias_Facturas_Ventas_*.csv` y las cotizaciones disponibles. La
+fuente de verdad es `build_cobranza_dashboard` en `rtb_analisis.py`; la API
+sirve `dashboard_data/cobranza_latest.json`.
+
+### Criterio de cierre
+
+La cartera representa el estado a `fecha_hasta`. Incluye cotizaciones aprobadas
+hasta esa fecha que no tengan un pago principal registrado en esa fecha o antes.
+Un pago posterior no modifica retroactivamente el cierre. Las aprobaciones
+posteriores tampoco entran en la cartera histórica.
+
+### KPIs y series de cobranza
+
+| Campo | Descripcion |
+|---|---|
+| `kpis.monto_cobrado_total` | Suma de cobros principales recibidos dentro del periodo; los segundos cobros no incrementan el ingreso |
+| `kpis.n_pendientes_cobro` / `monto_pendiente_cobro` | Cotizaciones y monto pendientes a la fecha de cierre |
+| `kpis.exposicion_cartera_sobre_cobrado` | Cartera al cierre dividida entre el monto cobrado del periodo; no es una tasa de conversion |
+| `kpis.cobertura_dias_cobro_pct` | Cobros principales con fecha de asociacion y fecha de pago / cobros principales |
+| `kpis.cobros_mayor_30_pct` | Cobros con lag mayor a 30 dias / cobros con fechas calculables |
+| `series.cartera_antiguedad` | Distribucion de cartera en `0-30`, `31-60`, `61-90` y `>90 dias` |
+| `tables.pendientes[].dias_pendiente` | Dias entre `Fecha_aprobacion` y `fecha_hasta` |
+| `tables.pendientes[].rango_antiguedad` | Rango ejecutivo de antiguedad asignado al pendiente |
+
+Los registros sin `Fecha_aprobacion` permanecen en el total de cartera, pero no
+se suman a los rangos de antiguedad porque no existe una base temporal confiable.
+
+### Lectura visual
+
+El modulo separa cuatro niveles: resumen de cobrado y cartera, salud de cobranza,
+evolucion/composicion y detalle operativo. Azul identifica cobros, ambar cartera,
+rojo se reserva para riesgo y gris para cobertura o datos incompletos.

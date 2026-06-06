@@ -1293,6 +1293,8 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     dias_cobro_promedio = round(avg(lags), 1) if lags else 0.0
     dias_cobro_mediana = round(med(lags), 1) if lags else 0.0
     dias_cobro_max = max(lags) if lags else 0
+    cobertura_dias_cobro_pct = len(lags) / cobros_principales if cobros_principales else 0.0
+    cobros_mayor_30_pct = sum(1 for dias in lags if dias > 30) / len(lags) if lags else 0.0
 
     rangos_bins = [
         ("Mismo día", 0, 1), ("1-3 d", 1, 4), ("4-7 d", 4, 8),
@@ -1311,40 +1313,75 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     cobros_sin_fecha_asociacion = sum(1 for r in pp_periodo if not r["fecha_asociacion"])
 
     # ─── Pendientes por cobrar ─────────────────────────────────────────────────
-    # paid_cot_ids: todos los IDs de cotización que aparecen en CUALQUIER pago (sin filtro de periodo)
-    paid_cot_ids = {r["cotizacion_id"] for r in pp_norm if r["cotizacion_id"]}
+    # La cartera se reconstruye a la fecha de cierre. Pagos posteriores no alteran cierres históricos.
+    paid_cot_ids = {
+        r["cotizacion_id"] for r in pp_norm
+        if r["cotizacion_id"] and r["fecha_pago"] and (not end_d or r["fecha_pago"].date() <= end_d)
+    }
 
     n_pendientes_cobro = 0
     monto_pendiente_cobro = 0.0
     tabla_pendientes = []
     top_clientes_pendientes = []
     pendientes_temporal = None
+    cartera_antiguedad = [
+        {"rango": "0-30 días", "n": 0, "monto": 0.0},
+        {"rango": "31-60 días", "n": 0, "monto": 0.0},
+        {"rango": "61-90 días", "n": 0, "monto": 0.0},
+        {"rango": ">90 días", "n": 0, "monto": 0.0},
+    ]
 
     if cotizaciones:
         _iso_date = lambda dt: dt.date().isoformat() if dt else ""
-        aprobadas_cot = [r for r in cotizaciones if (r.get("Estado_cotizacion") or "").strip() == "Aprobada"]
+        aprobadas_cot = []
+        for r in cotizaciones:
+            if (r.get("Estado_cotizacion") or "").strip() != "Aprobada":
+                continue
+            fecha_aprobacion = parse_date(r.get("Fecha_aprobacion", ""))
+            if end_d and fecha_aprobacion and fecha_aprobacion.date() > end_d:
+                continue
+            aprobadas_cot.append(r)
         pendientes_cot = [r for r in aprobadas_cot if r.get("Cotizacion_id", "").strip() not in paid_cot_ids]
 
         n_pendientes_cobro = len(pendientes_cot)
         monto_pendiente_cobro = round(sum(f(r.get("Total", 0)) for r in pendientes_cot), 2)
 
-        # Tabla de pendientes — top 20 por monto desc
+        def _rango_antiguedad(dias):
+            if dias is None or dias <= 30:
+                return "0-30 días"
+            if dias <= 60:
+                return "31-60 días"
+            if dias <= 90:
+                return "61-90 días"
+            return ">90 días"
+
         def _norm_pend(r):
             fap = parse_date(r.get("Fecha_aprobacion", ""))
+            dias_pendiente = max(0, (end_d - fap.date()).days) if end_d and fap else None
             return {
                 "cotizacion_id": r.get("Cotizacion_id", "").strip(),
                 "nombre": (r.get("Cotizacion_nombre") or "").strip(),
                 "cliente": (r.get("Cliente") or "").strip(),
                 "monto": round(f(r.get("Total", 0)), 2),
                 "fecha_aprobacion": _iso_date(fap),
+                "dias_pendiente": dias_pendiente,
+                "rango_antiguedad": _rango_antiguedad(dias_pendiente),
                 "estado_pago": (r.get("Estado_pago") or "").strip(),
                 "po": (r.get("PO") or "").strip(),
             }
 
+        pendientes_norm = [_norm_pend(r) for r in pendientes_cot]
         tabla_pendientes = sorted(
-            [_norm_pend(r) for r in pendientes_cot],
-            key=lambda x: -x["monto"],
+            pendientes_norm,
+            key=lambda x: (-(x["dias_pendiente"] if x["dias_pendiente"] is not None else -1), -x["monto"]),
         )[:20]
+        antiguedad_index = {item["rango"]: item for item in cartera_antiguedad}
+        for item in pendientes_norm:
+            if item["dias_pendiente"] is None:
+                continue
+            bucket = antiguedad_index[item["rango_antiguedad"]]
+            bucket["n"] += 1
+            bucket["monto"] = round(bucket["monto"] + item["monto"], 2)
 
         # Top 10 clientes por monto pendiente
         _cli_pend = defaultdict(lambda: {"n": 0, "m": 0.0})
@@ -1470,6 +1507,9 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
             "cobros_sin_fecha_asociacion": cobros_sin_fecha_asociacion,
             "n_pendientes_cobro": n_pendientes_cobro,
             "monto_pendiente_cobro": monto_pendiente_cobro,
+            "cobertura_dias_cobro_pct": cobertura_dias_cobro_pct,
+            "cobros_mayor_30_pct": cobros_mayor_30_pct,
+            "exposicion_cartera_sobre_cobrado": monto_pendiente_cobro / monto_cobrado_total if monto_cobrado_total else 0.0,
             "senales": len(signals),
         },
         "series": {
@@ -1483,6 +1523,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
                 "rangos": rangos,
             },
             "pendientes_temporal": pendientes_temporal,
+            "cartera_antiguedad": cartera_antiguedad,
         },
         "tables": {
             "top_clientes": top_clientes,
@@ -2086,6 +2127,12 @@ def build_finanzas_dashboard(
         {"concepto": "Gastos op.",  "monto": round(-egreso_dev_gastos, 2),  "tipo": "egreso"},
         {"concepto": "Utilidad",    "monto": utilidad_devengada,            "tipo": "total"},
     ]
+    waterfall_caja = [
+        {"concepto": "Cobranza",    "monto": round(ingreso_caja, 2),        "tipo": "ingreso"},
+        {"concepto": "Pagos prov.", "monto": round(-egreso_caja_pagos, 2),  "tipo": "egreso"},
+        {"concepto": "Gastos op.",  "monto": round(-egreso_caja_gastos, 2), "tipo": "egreso"},
+        {"concepto": "Flujo neto",  "monto": flujo_caja_neto,               "tipo": "total"},
+    ]
     iva_split = [
         {"tipo": "Trasladado",  "m": iva_trasladado},
         {"tipo": "Acreditable", "m": iva_acreditable},
@@ -2119,9 +2166,10 @@ def build_finanzas_dashboard(
             "temporal": temporal,
         },
         "tables": {
-            "comparativo":        comparativo,
+            "comparativo":         comparativo,
             "waterfall_devengado": waterfall_devengado,
-            "iva_split":          iva_split,
+            "waterfall_caja":      waterfall_caja,
+            "iva_split":           iva_split,
         },
         "signals": all_signals,
     }

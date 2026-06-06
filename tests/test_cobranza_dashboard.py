@@ -382,6 +382,70 @@ class TestPendientesCobro(unittest.TestCase):
         # cot-A está pagada (aunque el cobro esté fuera de periodo), cot-B pendiente
         self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
 
+    def test_pago_posterior_al_cierre_no_elimina_cartera_historica(self):
+        pp = [_pp(**{
+            "Pedido Pago Cotizacion": "cot-A",
+            "Pedido Pago Fecha de pago ": "2026-06-10",
+        })]
+        cots = [_cot(**{"Cotizacion_id": "cot-A", "Fecha_aprobacion": "2026-05-10"})]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
+
+    def test_aprobacion_posterior_al_cierre_no_entra_en_cartera(self):
+        cots = [
+            _cot(**{"Cotizacion_id": "cot-mayo", "Fecha_aprobacion": "2026-05-31"}),
+            _cot(**{"Cotizacion_id": "cot-junio", "Fecha_aprobacion": "2026-06-01"}),
+        ]
+        r = build_cobranza_dashboard([], [], cotizaciones=cots, **PERIODO)
+        self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
+        self.assertEqual(r["tables"]["pendientes"][0]["cotizacion_id"], "cot-mayo")
+
+    def test_antiguedad_cartera_usa_fecha_de_cierre(self):
+        cots = [
+            _cot(**{"Cotizacion_id": "d30", "Fecha_aprobacion": "2026-05-01", "Total": "100"}),
+            _cot(**{"Cotizacion_id": "d31", "Fecha_aprobacion": "2026-04-30", "Total": "200"}),
+            _cot(**{"Cotizacion_id": "d60", "Fecha_aprobacion": "2026-04-01", "Total": "300"}),
+            _cot(**{"Cotizacion_id": "d61", "Fecha_aprobacion": "2026-03-31", "Total": "400"}),
+            _cot(**{"Cotizacion_id": "d90", "Fecha_aprobacion": "2026-03-02", "Total": "500"}),
+            _cot(**{"Cotizacion_id": "d91", "Fecha_aprobacion": "2026-03-01", "Total": "600"}),
+        ]
+        r = build_cobranza_dashboard([], [], cotizaciones=cots, **PERIODO)
+        buckets = {x["rango"]: x for x in r["series"]["cartera_antiguedad"]}
+        self.assertEqual(buckets["0-30 días"]["n"], 1)
+        self.assertEqual(buckets["31-60 días"]["n"], 2)
+        self.assertEqual(buckets["61-90 días"]["n"], 2)
+        self.assertEqual(buckets[">90 días"]["n"], 1)
+        self.assertAlmostEqual(buckets[">90 días"]["monto"], 600.0, places=2)
+
+    def test_pendientes_ordenan_por_antiguedad_y_monto(self):
+        cots = [
+            _cot(**{"Cotizacion_id": "reciente", "Fecha_aprobacion": "2026-05-25", "Total": "9000"}),
+            _cot(**{"Cotizacion_id": "viejo-menor", "Fecha_aprobacion": "2026-03-01", "Total": "1000"}),
+            _cot(**{"Cotizacion_id": "viejo-mayor", "Fecha_aprobacion": "2026-03-01", "Total": "3000"}),
+        ]
+        r = build_cobranza_dashboard([], [], cotizaciones=cots, **PERIODO)
+        self.assertEqual(
+            [x["cotizacion_id"] for x in r["tables"]["pendientes"]],
+            ["viejo-mayor", "viejo-menor", "reciente"],
+        )
+        self.assertEqual(r["tables"]["pendientes"][0]["rango_antiguedad"], ">90 días")
+
+    def test_cobertura_y_porcentaje_mayor_30_dias(self):
+        pp = [
+            _pp(**{"Pedido Pago ID": "rapido", "Pedido Pago Fecha de Asociacion": "2026-05-01", "Pedido Pago Fecha de pago ": "2026-05-11"}),
+            _pp(**{"Pedido Pago ID": "lento", "Pedido Pago Fecha de Asociacion": "2026-03-01", "Pedido Pago Fecha de pago ": "2026-05-11"}),
+            _pp(**{"Pedido Pago ID": "sin-fecha", "Pedido Pago Fecha de Asociacion": "", "Pedido Pago Fecha de pago ": "2026-05-11"}),
+        ]
+        r = build_cobranza_dashboard(pp, [], **PERIODO)
+        self.assertAlmostEqual(r["kpis"]["cobertura_dias_cobro_pct"], 2 / 3, places=4)
+        self.assertAlmostEqual(r["kpis"]["cobros_mayor_30_pct"], 1 / 2, places=4)
+
+    def test_exposicion_cartera_sobre_cobrado(self):
+        pp = [_pp(**{"Pedido Pago Cotizacion": "pagada", "Pedido Pago Total": "1000"})]
+        cots = [_cot(**{"Cotizacion_id": "pendiente", "Total": "2500"})]
+        r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
+        self.assertAlmostEqual(r["kpis"]["exposicion_cartera_sobre_cobrado"], 2.5, places=4)
+
     def test_top_clientes_pendientes_presente(self):
         r = self._build_with_cots([], ["cot-A", "cot-B"])
         self.assertIn("top_clientes_pendientes", r["tables"])

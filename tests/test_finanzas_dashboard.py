@@ -448,6 +448,18 @@ class TestTablas(unittest.TestCase):
             if row["tipo"] == "egreso":
                 self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' debería ser negativo")
 
+    def test_waterfall_caja_tiene_4_filas(self):
+        self.assertEqual(len(self.tables["waterfall_caja"]), 4)
+
+    def test_waterfall_caja_flujo_es_total(self):
+        flujo = next(r for r in self.tables["waterfall_caja"] if r["tipo"] == "total")
+        self.assertAlmostEqual(flujo["monto"], self.result["kpis"]["flujo_caja_neto"], places=1)
+
+    def test_waterfall_caja_egresos_negativos(self):
+        for row in self.tables["waterfall_caja"]:
+            if row["tipo"] == "egreso":
+                self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' debería ser negativo")
+
     def test_iva_split_tiene_3_filas(self):
         self.assertEqual(len(self.tables["iva_split"]), 3)
 
