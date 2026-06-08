@@ -275,3 +275,11 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-05 | Nuevos módulos "Pagos a Proveedores" y "Gastos Operativos" (5º y 6º tabs). Backend: `build_pagos_proveedores_dashboard`, `build_gastos_operativos_dashboard`, `_find_csv_with_fallback` (genérico, compartido). Reglas clave: `cantidad_pagada` puede ser negativo (NC aplicada), `tipo_pago` viene con prefijo numérico, `Deducible` es string "TRUE"/"FALSE", campos de Gastos tienen espacios en el nombre. 49 tests nuevos (23 + 26). Suite completa: 130 tests. |
 | 2026-06-05 | Gastos Operativos: refactor visual completo — todas las tablas y leyendas migradas a `<canvas>`. 4 helpers canvas nuevos en `rtb_web.py`: `drawTableCanvas`, `drawGroupedBarChart`, `drawKpiCardsCanvas`, `drawPieLegendCanvas`. Centro de la dona dibujado en canvas (eliminado `div.pie-center`). Interactividad tabla↔gráfica bidireccional en Comportamiento semanal y Distribución por categoría. Análisis fiscal: tarjetas `.tiempos-kpi` HTML + gráfica de barras agrupadas canvas (Monto `#276f86` / IVA `#d0b56b`). Tabla de detalle eliminada. `GASTOS_CAT_COLORS` y colores de gráficas alineados a la paleta principal del tema. Bug resuelto: usar `renderVal` (no `valueOf`) en columnas de `drawTableCanvas` — `valueOf` es método nativo de Object.prototype y causa `[object Object]` en todas las celdas. |
 | 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
+
+---
+
+## Nota de despliegue — git push
+
+**Excluir siempre de commits/push:** `docker-compose.yml` — los volúmenes usan rutas absolutas de la máquina local (`/home/dhguilleng/Nextcloud/Sistemas/REPORTES/Dashboard_interactivo_reportes/{data,data_procesada,dashboard_data}`) que no aplican en otros entornos. El archivo en el repo mantiene rutas relativas (`./data`, `./data_procesada`, `./dashboard_data`).
+
+Todo lo demás (`rtb_web.py`, `rtb_analisis.py`, `tests/`, `CLAUDE.md`, etc.) se sube normalmente.
