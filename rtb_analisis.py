@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""RTB Cierre Mensual — Módulo de análisis. Devuelve dict R con todas las métricas."""
+"""RTB Cierre Mensual — Modulo de analisis. Devuelve dict R con todas las metricas."""
 
 import csv, json, os, re
 from datetime import datetime, timezone
@@ -19,7 +19,7 @@ def parse_date(s):
         except: return None
     s = s.replace("Z", "")
     s = re.sub(r'([+-]\d{2}:\d{2})$','',s)
-    # Longitudes reales del string de fecha, NO len(fmt) que da tamaño del formato
+    # Longitudes reales del string de fecha, NO len(fmt) que da tamano del formato
     for fmt, n in [("%Y-%m-%dT%H:%M:%S.%f",26),("%Y-%m-%dT%H:%M:%S",19),
                    ("%Y-%m-%dT%H:%M",16),("%Y-%m-%d",10)]:
         try: return datetime.strptime(s[:n], fmt)
@@ -105,7 +105,7 @@ def load_cotizaciones(data_dir="data"):
     try:
         return read_csv(find_latest_csv(data_dir, "Cotizaciones"))
     except FileNotFoundError:
-        # Fallback: buscar en data_procesada/ cuando data/ está vacío (post-archivo de n8n)
+        # Fallback: buscar en data_procesada/ cuando data/ esta vacio (post-archivo de n8n)
         archive = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "data_procesada")
         if os.path.isdir(archive):
             matches = []
@@ -170,7 +170,7 @@ def compute_ventas(cot):
         tip_cot[tp]["m"] += f(r.get("Total"))
 
     t_apr = []
-    rangos_apr = {"Mismo día": 0, "1-3 días": 0, "4-7 días": 0, ">7 días": 0}
+    rangos_apr = {"Mismo dia": 0, "1-3 dias": 0, "4-7 dias": 0, ">7 dias": 0}
     hist_apr = defaultdict(int)
     sem_apr_times = defaultdict(list)
     n_apr_sin_fechas = 0
@@ -189,13 +189,13 @@ def compute_ventas(cot):
         if s:
             sem_apr_times[s].append(float(delta))
         if delta == 0:
-            rangos_apr["Mismo día"] += 1
+            rangos_apr["Mismo dia"] += 1
         elif delta <= 3:
-            rangos_apr["1-3 días"] += 1
+            rangos_apr["1-3 dias"] += 1
         elif delta <= 7:
-            rangos_apr["4-7 días"] += 1
+            rangos_apr["4-7 dias"] += 1
         else:
-            rangos_apr[">7 días"] += 1
+            rangos_apr[">7 dias"] += 1
     sem_apr = {s: {"avg": avg(sem_apr_times[s]), "med": med(sem_apr_times[s]), "n": len(sem_apr_times[s])} for s in ["S1", "S2", "S3", "S4", "S5"]}
 
     rol_cot = defaultdict(lambda: {"n": 0, "m": 0.0, "na": 0, "ma": 0.0})
@@ -554,8 +554,8 @@ def build_facturacion_dashboard(cot, principales, secundarias, period_label="Per
         seen.add(identity)
         vigentes.append(item)
     # Suprimir falsos positivos: mismo factura_id en principal y secundaria es el mismo
-    # registro de Notion exportado en ambos CSVs (anomalía de export, no error de captura).
-    # Solo reportar duplicados cuya identidad no sea el factura_id (colisión de folio/cot).
+    # registro de Notion exportado en ambos CSVs (anomalia de export, no error de captura).
+    # Solo reportar duplicados cuya identidad no sea el factura_id (colision de folio/cot).
     duplicate_rows = [item for item in duplicate_rows if not item["factura_id"]]
 
     cot_aprobadas = [
@@ -1007,7 +1007,7 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
     fc_all_norm   = [_norm_fc_row(r) for r in fc]
     fc_all_active = [r for r in fc_all_norm if r["estado_factura"] != "Factura Cancelada"]
     # Set de UUIDs de anticipos consumidos por alguna factura ACTIVA (cualquier periodo).
-    # Una factura cancelada NO regulariza al anticipo: vuelve a pendiente automáticamente.
+    # Una factura cancelada NO regulariza al anticipo: vuelve a pendiente automaticamente.
     referenced_ids = set()
     for r in fc_all_active:
         referenced_ids.update(r.get("anticipos_ids", []))
@@ -1024,13 +1024,13 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
     tot_fc = round(sum(r["tot"] for r in fc_active), 2)
     # IVA recibido: derivado del total realmente reportado en las facturas
     iva_fc = round(tot_fc - sub_fc - env_fc, 2)
-    # IVA acreditable teórico al 16%
+    # IVA acreditable teorico al 16%
     iva_real_fc = round(sub_fc * 0.16, 2)
     iva_diff_fc = round(iva_fc - iva_real_fc, 2)
     iva_diff_pct_fc = (iva_diff_fc / iva_real_fc) if iva_real_fc else 0
     iva_alerta = abs(iva_diff_fc) > 100 and abs(iva_diff_pct_fc) > 0.02
 
-    # Canceladas (métrica de control de calidad)
+    # Canceladas (metrica de control de calidad)
     n_canc   = len(fc_canc)
     tot_canc = round(sum(r["tot"] for r in fc_canc), 2)
 
@@ -1040,7 +1040,7 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
         ef_fc[r["estado_factura"]]["n"] += 1
         ef_fc[r["estado_factura"]]["m"] += r["tot"]
 
-    # Tipo de compra (solo facturas activas; campo vacío/Sin tipo → "Productos vendibles")
+    # Tipo de compra (solo facturas activas; campo vacio/Sin tipo → "Productos vendibles")
     tp_fc = defaultdict(lambda: {"n": 0, "m": 0.0})
     for r in fc_active:
         tipo = r["tipo_pago"] if r["tipo_pago"] and r["tipo_pago"] != "Sin tipo" else "Productos vendibles"
@@ -1111,8 +1111,8 @@ def build_compras_dashboard(fc, anticipos=None, period_label="Periodo actual", f
     n_ant_regularizados = len(regularizados)
     monto_regularizados = round(sum(a["monto"] for a in regularizados), 2)
 
-    # Serie temporal apilada: ambas series usan la fecha de emisión del anticipo.
-    # Rojo = pendientes, verde = regularizados, apilados en el mes de emisión.
+    # Serie temporal apilada: ambas series usan la fecha de emision del anticipo.
+    # Rojo = pendientes, verde = regularizados, apilados en el mes de emision.
     if ant_in_period:
         ant_axis = temporal_axis(
             fecha_desde,
@@ -1270,7 +1270,7 @@ def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
     if sin_factura:
         signals.append(make_cobranza_signal(
             "cobro_sin_factura", "riesgo", "Cobros sin folio de factura",
-            f"{len(sin_factura)} cobro(s) con campo '# de Factura' vacío o no parseable.",
+            f"{len(sin_factura)} cobro(s) con campo '# de Factura' vacio o no parseable.",
             period_label,
             {"cantidad": len(sin_factura), "monto": round(sum(r["monto"] for r in sin_factura), 2)},
             [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
@@ -1282,7 +1282,7 @@ def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
     if folio_sucios:
         signals.append(make_cobranza_signal(
             "factura_folio_sucio", "atencion", "Folios de factura con notas extra",
-            f"{len(folio_sucios)} cobro(s) tienen notas o múltiples folios en '# de Factura'. Se extrae el primero.",
+            f"{len(folio_sucios)} cobro(s) tienen notas o multiples folios en '# de Factura'. Se extrae el primero.",
             period_label,
             {"cantidad": len(folio_sucios)},
             [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
@@ -1298,26 +1298,26 @@ def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
             period_label,
             {"cantidad": len(sin_cliente), "monto": round(sum(r["monto"] for r in sin_cliente), 2)},
             [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "monto": r["monto"]} for r in sin_cliente[:10]],
-            "Asignar el cliente en Notion para poder hacer análisis por cliente.",
+            "Asignar el cliente en Notion para poder hacer analisis por cliente.",
         ))
 
     sin_asoc = [r for r in rows if r["tipo"] == "principal" and not r["fecha_asociacion"]]
     if sin_asoc:
         signals.append(make_cobranza_signal(
-            "cobro_sin_fecha_asociacion", "atencion", "Cobros sin fecha de asociación a factura",
+            "cobro_sin_fecha_asociacion", "atencion", "Cobros sin fecha de asociacion a factura",
             f"{len(sin_asoc)} cobro(s) no tienen 'Fecha de Asociacion' en Notion. No es posible calcular el lag.",
             period_label,
             {"cantidad": len(sin_asoc), "monto": round(sum(r["monto"] for r in sin_asoc), 2)},
             [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"],
               "monto": r["monto"]} for r in sin_asoc[:10]],
-            "Registrar la fecha en que se asoció el pago a la factura en Notion.",
+            "Registrar la fecha en que se asocio el pago a la factura en Notion.",
         ))
 
     sec_sin_monto = [r for r in rows if r["tipo"] == "secundaria"]
     if sec_sin_monto:
         signals.append(make_cobranza_signal(
             "monto_secundaria_no_capturado", "atencion", "Segundo cobro sin monto capturado",
-            f"{len(sec_sin_monto)} cobro(s) secundario(s). El campo 'Monto pagado Secundaria' está vacío en Notion.",
+            f"{len(sec_sin_monto)} cobro(s) secundario(s). El campo 'Monto pagado Secundaria' esta vacio en Notion.",
             period_label,
             {"cantidad": len(sec_sin_monto)},
             [{"pedido_id": r["pedido_id"], "nombre": r["nombre"], "cliente": r["cliente"]} for r in sec_sin_monto[:10]],
@@ -1327,7 +1327,7 @@ def build_cobranza_signals(rows, kpis, period_label="Periodo actual"):
     if kpis.get("dias_cobro_mediana", 0) > 30:
         signals.append(make_cobranza_signal(
             "cobranza_lenta", "riesgo", "Cobranza con lag alto",
-            f"La mediana de días de cobranza es {kpis['dias_cobro_mediana']:.0f} días (umbral: 30).",
+            f"La mediana de dias de cobranza es {kpis['dias_cobro_mediana']:.0f} dias (umbral: 30).",
             period_label,
             {"dias_cobro_mediana": kpis["dias_cobro_mediana"],
              "dias_cobro_promedio": kpis.get("dias_cobro_promedio", 0)},
@@ -1363,7 +1363,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     monto_secundarias_referencial = round(sum(r["monto"] for r in ps_periodo), 2)
     ticket_promedio = round(monto_cobrado_total / cobros_principales, 2) if cobros_principales else 0.0
 
-    # ─── Días de cobranza ─────────────────────────────────────────────────────
+    # ─── Dias de cobranza ─────────────────────────────────────────────────────
     lags = []
     for r in pp_periodo:
         d = days_diff(r["fecha_asociacion"], r["fecha_pago"])
@@ -1376,7 +1376,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     cobros_mayor_30_pct = sum(1 for dias in lags if dias > 30) / len(lags) if lags else 0.0
 
     rangos_bins = [
-        ("Mismo día", 0, 1), ("1-3 d", 1, 4), ("4-7 d", 4, 8),
+        ("Mismo dia", 0, 1), ("1-3 d", 1, 4), ("4-7 d", 4, 8),
         ("8-15 d", 8, 16), ("16-30 d", 16, 31), (">30 d", 31, None),
     ]
     rangos_counts = histog(lags, rangos_bins)
@@ -1392,7 +1392,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     cobros_sin_fecha_asociacion = sum(1 for r in pp_periodo if not r["fecha_asociacion"])
 
     # ─── Pendientes por cobrar ─────────────────────────────────────────────────
-    # La cartera se reconstruye a la fecha de cierre. Pagos posteriores no alteran cierres históricos.
+    # La cartera se reconstruye a la fecha de cierre. Pagos posteriores no alteran cierres historicos.
     paid_cot_ids = {
         r["cotizacion_id"] for r in pp_norm
         if r["cotizacion_id"] and r["fecha_pago"] and (not end_d or r["fecha_pago"].date() <= end_d)
@@ -1404,10 +1404,10 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     top_clientes_pendientes = []
     pendientes_temporal = None
     cartera_antiguedad = [
-        {"rango": "0-30 días", "n": 0, "monto": 0.0},
-        {"rango": "31-60 días", "n": 0, "monto": 0.0},
-        {"rango": "61-90 días", "n": 0, "monto": 0.0},
-        {"rango": ">90 días", "n": 0, "monto": 0.0},
+        {"rango": "0-30 dias", "n": 0, "monto": 0.0},
+        {"rango": "31-60 dias", "n": 0, "monto": 0.0},
+        {"rango": "61-90 dias", "n": 0, "monto": 0.0},
+        {"rango": ">90 dias", "n": 0, "monto": 0.0},
     ]
 
     if cotizaciones:
@@ -1427,12 +1427,12 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
 
         def _rango_antiguedad(dias):
             if dias is None or dias <= 30:
-                return "0-30 días"
+                return "0-30 dias"
             if dias <= 60:
-                return "31-60 días"
+                return "31-60 dias"
             if dias <= 90:
-                return "61-90 días"
-            return ">90 días"
+                return "61-90 dias"
+            return ">90 dias"
 
         def _norm_pend(r):
             fap = parse_date(r.get("Fecha_aprobacion", ""))
@@ -1474,7 +1474,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
         ]
 
         # Serie temporal de pendientes por Fecha_aprobacion
-        # Detectar rango automáticamente para mostrar distribución de antigüedad
+        # Detectar rango automaticamente para mostrar distribucion de antiguedad
         pend_fechas = [parse_date(r.get("Fecha_aprobacion", "")) for r in pendientes_cot]
         pend_fechas = [d for d in pend_fechas if d]
         if pend_fechas:
@@ -1499,7 +1499,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
             fecha_hasta=pend_fmax,
         )
 
-    # ─── Señales ───────────────────────────────────────────────────────────────
+    # ─── Senales ───────────────────────────────────────────────────────────────
     kpis_pre = {"dias_cobro_mediana": dias_cobro_mediana, "dias_cobro_promedio": dias_cobro_promedio}
     signals = build_cobranza_signals(all_rows, kpis_pre, period_label)
 
@@ -1614,7 +1614,7 @@ def build_cobranza_dashboard(principales, secundarias, period_label="Periodo act
     }
 
 
-# ─── Módulo Pagos a Proveedores ─────────────────────────────────────────────
+# ─── Modulo Pagos a Proveedores ─────────────────────────────────────────────
 _RE_PAGOS_FC = re.compile(r"^Pagos_Facturas_Compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 _RE_NOTAS_CREDITO = re.compile(r"^Pago_Facturas_Nostas_Credito_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 
@@ -1634,8 +1634,8 @@ def find_latest_pagos_proveedores_csvs(data_dir="data"):
     p_fc = _find_csv_with_fallback(data_dir, _RE_PAGOS_FC, "Pagos_Facturas_Compras_")
     p_nc = _find_csv_with_fallback(data_dir, _RE_NOTAS_CREDITO, "Pago_Facturas_Nostas_Credito_")
     if p_fc is None:
-        raise FileNotFoundError(f"No se encontró Pagos_Facturas_Compras_*.csv en {data_dir} ni en data_procesada/")
-    return p_fc, p_nc  # p_nc puede ser None si no existe aún
+        raise FileNotFoundError(f"No se encontro Pagos_Facturas_Compras_*.csv en {data_dir} ni en data_procesada/")
+    return p_fc, p_nc  # p_nc puede ser None si no existe aun
 
 
 _RE_GASTOS_OP = re.compile(r"^Gastos_Operativos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
@@ -1643,11 +1643,11 @@ _RE_GASTOS_OP = re.compile(r"^Gastos_Operativos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.c
 def find_latest_gastos_operativos_csv(data_dir="data"):
     p = _find_csv_with_fallback(data_dir, _RE_GASTOS_OP, "Gastos_Operativos_")
     if p is None:
-        raise FileNotFoundError(f"No se encontró Gastos_Operativos_*.csv en {data_dir} ni en data_procesada/")
+        raise FileNotFoundError(f"No se encontro Gastos_Operativos_*.csv en {data_dir} ni en data_procesada/")
     return p
 
 
-# ─── Módulo Logística ────────────────────────────────────────────────────────
+# ─── Modulo Logistica ────────────────────────────────────────────────────────
 _RE_PED_APROBADOS   = re.compile(r"^Pedidos_Aprbados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 _RE_PED_ENVIADOS    = re.compile(r"^Pedidos_Enviados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 _RE_PED_ENTREGADOS  = re.compile(r"^Pedidos_Entregados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
@@ -1661,24 +1661,24 @@ def find_latest_logistica_csvs(data_dir="data"):
     p_seg = _find_csv_with_fallback(data_dir, _RE_SEG_INCOMPLETOS, "Segimiento_pedidos_entregados_incompletos_")
     if p_et is None:
         raise FileNotFoundError(
-            f"No se encontró Pedidos_Entregados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+            f"No se encontro Pedidos_Entregados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
         )
     if p_ap is None:
         raise FileNotFoundError(
-            f"No se encontró Pedidos_Aprbados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+            f"No se encontro Pedidos_Aprbados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
         )
     if p_en is None:
         raise FileNotFoundError(
-            f"No se encontró Pedidos_Enviados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+            f"No se encontro Pedidos_Enviados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
         )
-    return p_ap, p_en, p_et, p_seg  # p_seg puede ser None si no existe todavía
+    return p_ap, p_en, p_et, p_seg  # p_seg puede ser None si no existe todavia
 
 
-# Normalización del tipo de pago de Pagos_Facturas_Compras
+# Normalizacion del tipo de pago de Pagos_Facturas_Compras
 _TP_MAP = {
     "1": "Efectivo",
     "3": "Transferencia",
-    "28": "Tarjeta de débito",
+    "28": "Tarjeta de debito",
     "99": "Por definir",
 }
 
@@ -1699,7 +1699,7 @@ def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Per
         d = dt.date()
         return (not start_d or d >= start_d) and (not end_d or d <= end_d)
 
-    # Construir lista de IDs de notas de crédito para cruce
+    # Construir lista de IDs de notas de credito para cruce
     nc_ids = {str(r.get("Pago_Facturas_Nostas_Credito_id", "")).strip() for r in (notas_credito or [])}
 
     def _norm_pago(r):
@@ -1754,7 +1754,7 @@ def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Per
     n_pendientes = len(pagos_pendientes)
     n_nc = len(nc_norm)
 
-    # Distribución tipo de pago
+    # Distribucion tipo de pago
     tp_data = defaultdict(lambda: {"n": 0, "m": 0.0})
     for r in pagos_pagados:
         tp = r["tipo_pago"]
@@ -1817,7 +1817,7 @@ def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Per
         key=lambda x: -x["monto"],
     )[:50]
 
-    # Señales
+    # Senales
     signals = []
     if n_por_definir:
         signals.append(make_signal(
@@ -1840,8 +1840,8 @@ def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Per
     nc_aplicadas = [r for r in pagos_pagados if len(r["nc_list"]) > 0]
     if nc_aplicadas:
         signals.append(make_signal(
-            "nc_aplicada", "info", "Notas de crédito aplicadas",
-            f"{len(nc_aplicadas)} factura(s) con nota de crédito aplicada en el periodo.",
+            "nc_aplicada", "info", "Notas de credito aplicadas",
+            f"{len(nc_aplicadas)} factura(s) con nota de credito aplicada en el periodo.",
             period_label,
             {"cantidad": len(nc_aplicadas)},
             [],
@@ -1887,7 +1887,7 @@ def build_pagos_proveedores_dashboard(pagos_fc, notas_credito, period_label="Per
     }
 
 
-# ─── Módulo Gastos Operativos ────────────────────────────────────────────────
+# ─── Modulo Gastos Operativos ────────────────────────────────────────────────
 def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha_desde=None, fecha_hasta=None):
     _s = parse_date(fecha_desde)
     _e = parse_date(fecha_hasta)
@@ -1912,7 +1912,7 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
             "proveedor": (r.get("Gasto Operativo Proveedor Nombre") or "").strip(),
             "proveedor_id": (r.get("Gasto Operativo Proveedor ID") or "").strip(),
             "tipo_pago": (r.get("Gasto Operativo Tipo de Pago") or "").strip(),
-            "categoria": (r.get("Gasto Operativo Categoria") or "").strip() or "Sin categoría",
+            "categoria": (r.get("Gasto Operativo Categoria") or "").strip() or "Sin categoria",
             "tarjeta": (r.get("Gasto Operativo Tarjeta ") or "").strip() or "Sin tarjeta",  # campo tiene espacio
             "deducible": str(r.get("Gasto Operativo Deducible") or "").strip().upper() == "TRUE",
         }
@@ -1939,7 +1939,7 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
     n_rechazados = len(rechazados)
     monto_rechazado = round(sum(r["total"] for r in rechazados), 2)
 
-    # Distribución por categoría
+    # Distribucion por categoria
     cat_data = defaultdict(lambda: {"n": 0, "m": 0.0})
     for r in periodo:
         cat_data[r["categoria"]]["n"] += 1
@@ -1949,7 +1949,7 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
         for k, v in sorted(cat_data.items(), key=lambda x: -x[1]["m"])
     ]
 
-    # Distribución por tarjeta
+    # Distribucion por tarjeta
     tar_data = defaultdict(lambda: {"n": 0, "m": 0.0})
     for r in periodo:
         tar_data[r["tarjeta"]]["n"] += 1
@@ -2015,7 +2015,7 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
         key=lambda x: -x["total"],
     )[:50]
 
-    # Señales
+    # Senales
     signals = []
     n_sin_factura = sum(1 for r in periodo if not r["factura"])
     n_sin_proveedor = sum(1 for r in periodo if not r["proveedor"])
@@ -2032,12 +2032,12 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
         ))
     if n_sin_factura:
         signals.append(make_signal(
-            "gasto_sin_factura", "info", "Gastos sin número de factura",
-            f"{n_sin_factura} gasto(s) sin número de factura capturado (monto total: ${monto_sin_factura:,.2f}).",
+            "gasto_sin_factura", "info", "Gastos sin numero de factura",
+            f"{n_sin_factura} gasto(s) sin numero de factura capturado (monto total: ${monto_sin_factura:,.2f}).",
             period_label,
             {"cantidad": n_sin_factura, "monto": monto_sin_factura},
             [],
-            "Común en efectivo / pasajes, pero verificar que estén respaldados.",
+            "Comun en efectivo / pasajes, pero verificar que esten respaldados.",
         ))
     if n_sin_proveedor:
         signals.append(make_signal(
@@ -2163,7 +2163,7 @@ def build_logistica_dashboard(
     en_periodo = [r for r in en_norm if in_period(r["fecha_envio"])]
     et_periodo = [r for r in et_norm if in_period(r["fecha_entrega"])]
 
-    # ── KPIs básicos ──────────────────────────────────────────────────────────
+    # ── KPIs basicos ──────────────────────────────────────────────────────────
     n_aprobados  = len(ap_periodo)
     n_enviados   = len(en_periodo)
     n_entregados = len(et_periodo)
@@ -2206,7 +2206,7 @@ def build_logistica_dashboard(
     completados = [r for r in seg_norm if (r["estado"] or "").lower() == "completado"]
     n_pend = len(pendientes)
 
-    # ── series.estado (distribución de estado_pedido en aprobados) ────────────
+    # ── series.estado (distribucion de estado_pedido en aprobados) ────────────
     estado_data = defaultdict(int)
     for r in ap_norm:
         estado_data[r["estado"] or "Sin estado"] += 1
@@ -2215,7 +2215,7 @@ def build_logistica_dashboard(
         for k, v in sorted(estado_data.items(), key=lambda x: -x[1])
     ]
 
-    # ── series.tipo_envio (Local vs Foráneo en entregados) ───────────────────
+    # ── series.tipo_envio (Local vs Foraneo en entregados) ───────────────────
     tipo_data = defaultdict(lambda: {"n": 0, "m": 0.0, "ciclos": []})
     for r in et_periodo:
         t = r["tipo_envio"]
@@ -2269,7 +2269,7 @@ def build_logistica_dashboard(
         for k, v in sorted(cli_data.items(), key=lambda x: -x[1]["m"])[:10]
     ]
 
-    # Pedidos lentos: ciclo > mediana×2 (mínimo 14 días)
+    # Pedidos lentos: ciclo > mediana×2 (minimo 14 dias)
     umbral_lento = max(ciclo_med * 2, 14.0) if ciclo_med > 0 else 14.0
     pedidos_lentos = []
     for r in et_periodo:
@@ -2315,23 +2315,23 @@ def build_logistica_dashboard(
     hist_counts = histog(leads_ciclo, LEAD_BINS)
     lead_hist = [{"rango": lbl, "n": hist_counts[lbl]} for lbl, _, _ in LEAD_BINS]
 
-    # ── Señales ───────────────────────────────────────────────────────────────
+    # ── Senales ───────────────────────────────────────────────────────────────
     signals = []
     UMBRAL_DIAS_LENTO = 10
 
     if ciclo_med > UMBRAL_DIAS_LENTO and n_con_lead >= 3:
         signals.append(make_signal(
             "entrega_lenta", "atencion", "Tiempos de entrega elevados",
-            f"La mediana del ciclo aprobación→entrega es {ciclo_med:.0f} días (umbral: {UMBRAL_DIAS_LENTO} días).",
+            f"La mediana del ciclo aprobacion→entrega es {ciclo_med:.0f} dias (umbral: {UMBRAL_DIAS_LENTO} dias).",
             period_label,
             {"ciclo_mediana": ciclo_med, "n_pedidos": n_con_lead, "umbral": UMBRAL_DIAS_LENTO},
             pedidos_lentos[:5],
-            "Revisar pedidos lentos — pueden tener problemas de abastecimiento o logística.",
+            "Revisar pedidos lentos — pueden tener problemas de abastecimiento o logistica.",
         ))
     if n_pend:
         signals.append(make_signal(
             "incompletos_pendientes", "riesgo", "Pedidos incompletos sin resolver",
-            f"{n_pend} pedido(s) entregado(s) con faltante pendiente de resolución.",
+            f"{n_pend} pedido(s) entregado(s) con faltante pendiente de resolucion.",
             period_label,
             {"cantidad": n_pend},
             [{"nombre": r["nombre"], "cliente": r["cliente"], "motivo": r["motivo"]} for r in pendientes[:5]],
@@ -2340,11 +2340,11 @@ def build_logistica_dashboard(
     if n_sin_fecha:
         signals.append(make_signal(
             "captura_fecha_incompleta", "info", "Pedidos sin fechas completas",
-            f"{n_sin_fecha} pedido(s) entregado(s) sin fecha de envío o entrega — lead time incalculable.",
+            f"{n_sin_fecha} pedido(s) entregado(s) sin fecha de envio o entrega — lead time incalculable.",
             period_label,
             {"cantidad": n_sin_fecha},
             [],
-            "Capturar las fechas en Notion para completar el análisis de tiempos.",
+            "Capturar las fechas en Notion para completar el analisis de tiempos.",
         ))
     if pct_faltante > 0.5 and n_entregados >= 5:
         signals.append(make_signal(
@@ -2353,7 +2353,7 @@ def build_logistica_dashboard(
             period_label,
             {"pct_faltante": pct_faltante, "n_con_faltante": n_con_faltante},
             [],
-            "Revisar gestión de inventario y proceso de preparación.",
+            "Revisar gestion de inventario y proceso de preparacion.",
         ))
 
     return {
@@ -2451,7 +2451,7 @@ def build_finanzas_dashboard(
     )
     iva_por_pagar = round(iva_trasladado - iva_acreditable, 2)
 
-    # Señales consolidadas (los 4 módulos que exponen lista signals)
+    # Senales consolidadas (los 4 modulos que exponen lista signals)
     all_signals = []
     for sub in [fac, cob, pag, gas]:
         all_signals.extend(sub.get("signals") or [])
@@ -2535,7 +2535,7 @@ def build_finanzas_dashboard(
         {"concepto": "Resultado", "devengado": utilidad_devengada,            "caja": flujo_caja_neto},
     ]
     waterfall_devengado = [
-        {"concepto": "Facturación", "monto": round(ingreso_devengado, 2),   "tipo": "ingreso"},
+        {"concepto": "Facturacion", "monto": round(ingreso_devengado, 2),   "tipo": "ingreso"},
         {"concepto": "Compras",     "monto": round(-egreso_dev_compras, 2), "tipo": "egreso"},
         {"concepto": "Gastos op.",  "monto": round(-egreso_dev_gastos, 2),  "tipo": "egreso"},
         {"concepto": "Utilidad",    "monto": utilidad_devengada,            "tipo": "total"},
@@ -2658,7 +2658,7 @@ def load_all(data_dir="data", allowed_files=None):
     D["_warnings"] = warnings
     return D
 
-# ─── Análisis ───────────────────────────────────────────────────────────────
+# ─── Analisis ───────────────────────────────────────────────────────────────
 def compute(D, period=None):
     period = period or {}
     shared_temporal_axis = temporal_axis(period.get("start"), period.get("end"))
@@ -2717,20 +2717,20 @@ def compute(D, period=None):
         c=(r.get("cliente","") or "?").strip()
         cli_ped[c]["n"]+=1; cli_ped[c]["m"]+=f(r["property_total_formula"])
 
-    # Tiempos preparación
+    # Tiempos preparacion
     t_prep=[f(r["dias_preparacion"]) for r in ped if r.get("dias_preparacion","").strip()]
-    prep_bins=[("0-1 días",0,2),("2-3 días",2,4),("4-7 días",4,8),("8-14 días",8,15),(">14 días",15,None)]
+    prep_bins=[("0-1 dias",0,2),("2-3 dias",2,4),("4-7 dias",4,8),("8-14 dias",8,15),(">14 dias",15,None)]
     rangos_prep=histog(t_prep, prep_bins)
 
     # Tiempos entrega
     t_ent=[f(r["dias_entrega"]) for r in ped if r.get("dias_entrega","").strip()]
-    ent_bins=[("Mismo día",0,1),("1-2 días",1,3),("3-5 días",3,6),("6-10 días",6,11),(">10 días",11,None)]
+    ent_bins=[("Mismo dia",0,1),("1-2 dias",1,3),("3-5 dias",3,6),("6-10 dias",6,11),(">10 dias",11,None)]
     rangos_ent=histog(t_ent, ent_bins)
     n_ent_2=sum(1 for v in t_ent if v<=2)
     n_ent_5=sum(1 for v in t_ent if v<=5)
     n_ent_7=sum(1 for v in t_ent if v<=7)
 
-    # Ciclo de facturación (desde PEDIDOS_CLIENTES)
+    # Ciclo de facturacion (desde PEDIDOS_CLIENTES)
     ciclo_pf=[]; ciclo_fv=[]; ciclo_va=[]; ciclo_total=[]
     for r in ped:
         dp=parse_date(r.get("fecha_pedido",""))
@@ -2837,7 +2837,7 @@ def compute(D, period=None):
         cli_pag[c]["n"]+=1; cli_pag[c]["m"]+=f(r["property_total_formula"])
 
     t_pago=[f(r["property_tiempos_de_pago"]) for r in pag if r.get("property_tiempos_de_pago","").strip()]
-    pago_bins=[("0-15 días",0,16),("16-30 días",16,31),("31-60 días",31,61),("61-90 días",61,91),(">90 días",91,None)]
+    pago_bins=[("0-15 dias",0,16),("16-30 dias",16,31),("31-60 dias",31,61),("61-90 dias",61,91),(">90 dias",91,None)]
     rangos_pago=histog(t_pago, pago_bins)
 
     # CxC estimado
@@ -2887,7 +2887,7 @@ def compute(D, period=None):
         c=(r.get("property_uso_cfdi","") or "Sin CFDI").strip() or "Sin CFDI"
         cfdi_fc[c]["n"]+=1; cfdi_fc[c]["m"]+=f(r["property_subtotal_f"])+f(r["property_iva_16"])
 
-    # Crédito vivo (no pagadas)
+    # Credito vivo (no pagadas)
     no_pag=[r for r in fc if r.get("property_status_de_pago","").strip()=="No Pagado"]
     cred_vivo=defaultdict(lambda:{"n":0,"m":0.0})
     for r in no_pag:
@@ -2911,7 +2911,7 @@ def compute(D, period=None):
         p=prov_name(r.get("name",""))
         prov_fcp[p]["n"]+=1; prov_fcp[p]["m"]+=f(r["property_subtotal_f"])+f(r["property_iva_16"])
 
-    # Días factura→pago para compras
+    # Dias factura→pago para compras
     t_fc_pago=[]
     for r in fcp:
         df=parse_date(r.get("property_fecha_de_factura.start",""))
@@ -3013,15 +3013,15 @@ def compute(D, period=None):
 
     mp_gas=defaultdict(lambda:{"n":0,"m":0.0})
     for r in gas_real:
-        mp=(r.get("property_m_todo_de_pago","") or "Sin método").strip() or "Sin método"
+        mp=(r.get("property_m_todo_de_pago","") or "Sin metodo").strip() or "Sin metodo"
         mp_gas[mp]["n"]+=1; mp_gas[mp]["m"]+=f(r["property_total"])
 
     cat_gas=defaultdict(lambda:{"n":0,"m":0.0})
     for r in gas_real:
-        cat=(r.get("property_categor_a","") or "Sin categoría").strip() or "Sin categoría"
+        cat=(r.get("property_categor_a","") or "Sin categoria").strip() or "Sin categoria"
         cat_gas[cat]["n"]+=1; cat_gas[cat]["m"]+=f(r["property_total"])
 
-    # Identificar carga fiscal dentro de "Otros" / sin categoría
+    # Identificar carga fiscal dentro de "Otros" / sin categoria
     fiscal_kw=["DECLARAC","ISR","IVA","SIPARE","INTERESE","FISCAL","IMSS","INFONAVIT"]
     carga_fiscal=[]
     for r in gas_real:

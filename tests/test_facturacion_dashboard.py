@@ -55,7 +55,7 @@ class FacturacionDashboardTests(unittest.TestCase):
         tipos = {signal["tipo"] for signal in dashboard["signals"]}
         self.assertIn("factura_captura_incompleta", tipos)
         # FAC-1 aparece en principales y secundarias con el mismo factura_id →
-        # es el mismo registro exportado dos veces, no un duplicado real → no dispara señal
+        # es el mismo registro exportado dos veces, no un duplicado real → no dispara senal
         self.assertNotIn("factura_duplicada", tipos)
         self.assertIn("rezago_facturacion_estimado", tipos)
 
@@ -105,9 +105,9 @@ class FacturacionDashboardTests(unittest.TestCase):
 
 
     def test_duplicate_signal_fires_only_for_folio_collision_not_same_factura_id(self):
-        """Duplicado por mismo factura_id (export Notion) no dispara señal; colisión de folio sí."""
+        """Duplicado por mismo factura_id (export Notion) no dispara senal; colision de folio si."""
         from rtb_analisis import build_facturacion_dashboard
-        # Caso 1: mismo factura_id en principal y secundaria → NO señal
+        # Caso 1: mismo factura_id en principal y secundaria → NO senal
         pri = [{"Factura_id": "FAC-X", "Factura_cotizacion": "COT-X", "Factura_Estado_Aprobacion": "Aprobada",
                 "Estado_Factura": "Factura enviada", "Fecha_Facturacion": '{"start":"2026-05-10"}',
                 "#_Factura": "FX", "Total": "100", "Monto_primer_factura": ""}]
@@ -117,7 +117,7 @@ class FacturacionDashboardTests(unittest.TestCase):
         d = build_facturacion_dashboard([], pri, sec, fecha_desde="2026-05-01", fecha_hasta="2026-05-31")
         tipos = {s["tipo"] for s in d["signals"]}
         self.assertNotIn("factura_duplicada", tipos)
-        # Caso 2: distinto factura_id pero mismo folio → SÍ señal (verdadero duplicado)
+        # Caso 2: distinto factura_id pero mismo folio → SI senal (verdadero duplicado)
         pri2 = [
             {"Factura_id": "", "Factura_cotizacion": "COT-A", "Factura_Estado_Aprobacion": "Aprobada",
              "Estado_Factura": "Factura enviada", "Fecha_Facturacion": '{"start":"2026-05-10"}',
@@ -157,7 +157,7 @@ class FacturacionDashboardTests(unittest.TestCase):
         self.assertEqual(dashboard["kpis"]["monto_facturado_vigente"], 0.0)
 
     def test_dirty_folio_triggers_signal_and_normalizes_folio(self):
-        """Folio con notas embebidas ('C5888 / nota') emite señal y se normaliza a 'C5888'."""
+        """Folio con notas embebidas ('C5888 / nota') emite senal y se normaliza a 'C5888'."""
         from rtb_analisis import build_facturacion_dashboard
         principales = [
             {"Factura_id": "FAC-D", "Factura_cotizacion": "COT-D", "Factura_Estado_Aprobacion": "Aprobada",

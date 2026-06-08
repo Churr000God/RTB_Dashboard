@@ -33,7 +33,7 @@ def _nc(**kw):
         "Pago_Facturas_Nostas_Credito_numero_documento": "NCE001",
         "Pago_Facturas_Nostas_Credito_proveedor_nombre": '["Grupo Test"]',
         "Pago_Facturas_Nostas_Credito_fecha_pago": '{"start":"2026-05-20","end":null,"time_zone":null}',
-        "Pago_Facturas_Nostas_Credito_tipo_documeto": "Nota de Crédito",
+        "Pago_Facturas_Nostas_Credito_tipo_documeto": "Nota de Credito",
         "Pago_Facturas_Nostas_Credito_tipo_pago": "Tarjeta de Debito",
         "Pago_Facturas_Nostas_Credito_factura_asociada": "pfc-otro",
         "Pago_Facturas_Nostas_Credito_tipo_cfdi": "G01",
@@ -122,7 +122,7 @@ class TestNormalizacionTipoPago(unittest.TestCase):
         pagos = [_pago(Pagos_Facturas_Compras_tipo_pago="28 Tarjeta de debito")]
         result = build_pagos_proveedores_dashboard(pagos, [], **PERIODO)
         tipos = {t["tipo"] for t in result["series"]["tipo_pago"]}
-        self.assertIn("Tarjeta de débito", tipos)
+        self.assertIn("Tarjeta de debito", tipos)
 
     def test_efectivo(self):
         pagos = [_pago(Pagos_Facturas_Compras_tipo_pago="1 Efectivo")]
@@ -142,8 +142,8 @@ class TestMontoNegativo(unittest.TestCase):
     """NC aplicada puede dar cantidad_pagada negativa o ~0."""
 
     def test_monto_negativo_suma_correctamente(self):
-        # El código redondea cada monto a 2 decimales antes de sumar.
-        # round(-0.0008, 2) = 0.0, así que monto_fc = 1000.0 + 0.0 = 1000.0
+        # El codigo redondea cada monto a 2 decimales antes de sumar.
+        # round(-0.0008, 2) = 0.0, asi que monto_fc = 1000.0 + 0.0 = 1000.0
         pagos = [
             _pago(Pagos_Facturas_Compras_id="a", Pagos_Facturas_Compras_cantidad_pagada="1000"),
             _pago(Pagos_Facturas_Compras_id="b", Pagos_Facturas_Compras_cantidad_pagada="-0.0008",

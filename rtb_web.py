@@ -168,7 +168,7 @@ def wait_for_changed_facturas(
 
     Primero espera a que al menos un archivo cambie vs. `before`.
     Luego espera `quiesce_seconds` adicionales sin nuevos cambios para
-    asegurarse de que n8n terminó de descargar todos los archivos.
+    asegurarse de que n8n termino de descargar todos los archivos.
     """
     root = Path(data_dir)
     # Fase 1: esperar el primer cambio
@@ -179,7 +179,7 @@ def wait_for_changed_facturas(
         if attempt == attempts - 1:
             return  # best-effort
         sleep(delay_seconds)
-    # Fase 2: estabilización — esperar hasta que no lleguen archivos nuevos
+    # Fase 2: estabilizacion — esperar hasta que no lleguen archivos nuevos
     quiesce_attempts = max(1, int(quiesce_seconds / delay_seconds))
     stable_count = 0
     prev = snapshot_facturas(root)
@@ -625,7 +625,7 @@ def publish_finanzas_snapshot(
     fecha_hasta: str,
 ) -> dict:
     """Consolida los 5 sub-dashboards ya persistidos en sus snapshots.
-    Cada sub-load está envuelto en try/except para que un módulo sin CSV no aborte el consolidado.
+    Cada sub-load esta envuelto en try/except para que un modulo sin CSV no aborte el consolidado.
     """
     period_label = f"{fecha_desde} a {fecha_hasta}"
 
@@ -943,7 +943,7 @@ def render_index() -> str:
         <li class="download-step">Descargando y sincronizando el CSV</li>
         <li class="download-step">Publicando metricas actualizadas</li>
       </ol>
-      <p class="download-note">Mantén esta pagina abierta durante el proceso.</p>
+      <p class="download-note">Manten esta pagina abierta durante el proceso.</p>
     </div>
   </section>
   <main class="app">
@@ -971,7 +971,7 @@ def render_index() -> str:
           </select>
         </div>
         <button id="submitButton" type="submit">Activar webhook</button>
-        <button id="regenerarButton" type="button" style="margin-top:8px;width:100%;background:#159895;border:none;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;font-size:.85rem;font-weight:600;opacity:.9;" title="Regenera los snapshots con los archivos ya descargados en data/, sin llamar a n8n. Útil cuando el webhook falla pero los archivos sí llegaron.">Regenerar con archivos actuales</button>
+        <button id="regenerarButton" type="button" style="margin-top:8px;width:100%;background:#159895;border:none;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;font-size:.85rem;font-weight:600;opacity:.9;" title="Regenera los snapshots con los archivos ya descargados en data/, sin llamar a n8n. Util cuando el webhook falla pero los archivos si llegaron.">Regenerar con archivos actuales</button>
       </form>
 
       <section class="status-card" aria-live="polite">
@@ -991,7 +991,7 @@ def render_index() -> str:
     <section class="main">
       <nav class="module-bar" aria-label="Modulos del dashboard">
         <button class="module-tab active" type="button" data-module="ventas" aria-current="page">Ventas</button>
-        <button class="module-tab" type="button" data-module="facturacion">Facturación</button>
+        <button class="module-tab" type="button" data-module="facturacion">Facturacion</button>
         <button class="module-tab" type="button" data-module="operacion">Operacion</button>
         <button class="module-tab" type="button" data-module="compras">Compras</button>
         <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
@@ -1078,12 +1078,12 @@ def render_index() -> str:
             <p class="section-subtitle">Ranking por monto del periodo seleccionado</p>
             <div class="top-charts-grid">
               <div>
-                <p class="top-chart-title">1.3 Más cotizan — monto cotizado c/IVA</p>
+                <p class="top-chart-title">1.3 Mas cotizan — monto cotizado c/IVA</p>
                 <div class="hbar-chart" id="topCotizanChart"></div>
                 <div class="chart-tooltip" id="topCotizanTooltip" hidden></div>
               </div>
               <div>
-                <p class="top-chart-title">1.4 Más compran — monto aprobado c/IVA</p>
+                <p class="top-chart-title">1.4 Mas compran — monto aprobado c/IVA</p>
                 <div class="hbar-chart" id="topApruebanyChart"></div>
                 <div class="chart-tooltip" id="topApruebanyTooltip" hidden></div>
               </div>
@@ -1117,13 +1117,13 @@ def render_index() -> str:
             </div>
           </section>
           <section class="status-section" id="tiemposAprSection" hidden>
-            <h2 class="section-title">1.6 Tiempos de aprobación</h2>
+            <h2 class="section-title">1.6 Tiempos de aprobacion</h2>
             <p class="section-subtitle">Solo cotizaciones aprobadas con ambas fechas registradas</p>
             <div id="tiemposAprAlerta" class="tiempos-alerta" hidden></div>
             <div class="tiempos-stats-row" id="tiemposAprKpis"></div>
             <div class="tiempos-layout">
               <div>
-                <p class="top-chart-title">Distribución por rango</p>
+                <p class="top-chart-title">Distribucion por rango</p>
                 <table class="status-table">
                   <thead>
                     <tr>
@@ -1137,19 +1137,19 @@ def render_index() -> str:
               </div>
               <div class="tiempos-charts-col">
                 <div>
-                  <p class="top-chart-title" id="tiemposTemporalTitle">Promedio de días por semana</p>
+                  <p class="top-chart-title" id="tiemposTemporalTitle">Promedio de dias por semana</p>
                   <div class="tiempos-canvas-wrap">
                     <canvas id="tiemposSemanCanvas" aria-label="Grafica de barras de dias promedio de aprobacion por semana"></canvas>
                     <div class="chart-tooltip" id="tiemposSemanTooltip" hidden></div>
                   </div>
                   <div class="chart-legend" style="margin-top:6px">
-                    <span class="legend-chip"><span class="legend-swatch" style="--status-color:#159895"></span>Días prom.</span>
+                    <span class="legend-chip"><span class="legend-swatch" style="--status-color:#159895"></span>Dias prom.</span>
                     <span class="legend-chip"><span class="legend-line" style="--status-color:#276f86;border-top:2px dashed #276f86;background:none"></span>Promedio global</span>
                     <span class="legend-chip"><span class="legend-line" style="--status-color:#d0b56b;border-top:2px dashed #d0b56b;background:none"></span>Tendencia</span>
                   </div>
                 </div>
                 <div>
-                  <p class="top-chart-title">Distribución por días exactos</p>
+                  <p class="top-chart-title">Distribucion por dias exactos</p>
                   <div class="tiempos-canvas-wrap">
                     <canvas id="tiemposHistCanvas" aria-label="Histograma de cantidad de aprobaciones por dias exactos"></canvas>
                     <div class="chart-tooltip" id="tiemposHistTooltip" hidden></div>
@@ -1159,12 +1159,12 @@ def render_index() -> str:
             </div>
           </section>
         </section>
-        <section id="facturacionPanel" class="facturacion-panel" aria-label="KPIs de facturación" hidden>
+        <section id="facturacionPanel" class="facturacion-panel" aria-label="KPIs de facturacion" hidden>
           <div class="kpi-grid facturacion-kpi-grid" id="facturacionKpiGrid">
-            <p class="panel-state">Cargando facturación...</p>
+            <p class="panel-state">Cargando facturacion...</p>
           </div>
           <section class="status-section" id="facturacionEstadoSection">
-            <h2 class="section-title">Estado de facturación</h2>
+            <h2 class="section-title">Estado de facturacion</h2>
             <p class="section-subtitle">Facturas vigentes del periodo, sin duplicar registros secundarios repetidos.</p>
             <div class="status-layout">
               <div class="table-wrap">
@@ -1175,7 +1175,7 @@ def render_index() -> str:
               </div>
               <div class="pie-panel">
                 <div class="pie-canvas-wrap">
-                  <canvas class="pie-chart" id="facturacionEstadoPie" width="520" height="520" aria-label="Gráfica de dona por monto y estado de factura"></canvas>
+                  <canvas class="pie-chart" id="facturacionEstadoPie" width="520" height="520" aria-label="Grafica de dona por monto y estado de factura"></canvas>
                   <div class="pie-center" id="facturacionEstadoPieCenter"><strong>100%</strong><span>Monto</span></div>
                 </div>
                 <div class="chart-tooltip" id="facturacionEstadoTooltip" hidden></div>
@@ -1185,7 +1185,7 @@ def render_index() -> str:
           </section>
           <section class="status-section">
             <h2 class="section-title">Comportamiento temporal</h2>
-            <p class="section-subtitle">Facturas vigentes por fecha de facturación.</p>
+            <p class="section-subtitle">Facturas vigentes por fecha de facturacion.</p>
             <div class="weekly-layout">
               <div class="table-wrap">
                 <table class="status-table">
@@ -1200,7 +1200,7 @@ def render_index() -> str:
                     <button class="chart-view-btn active" id="factTemporalVistaMonto" type="button">Monto</button>
                     <button class="chart-view-btn" id="factTemporalVistaCantidad" type="button">Cantidad</button>
                   </div>
-                  <canvas class="weekly-chart" id="facturacionTemporalChart" width="760" height="420" aria-label="Gráfica de barras y tendencia de facturas vigentes por periodo"></canvas>
+                  <canvas class="weekly-chart" id="facturacionTemporalChart" width="760" height="420" aria-label="Grafica de barras y tendencia de facturas vigentes por periodo"></canvas>
                   <div class="chart-tooltip" id="facturacionTemporalTooltip" hidden></div>
                 </div>
                 <div class="chart-legend">
@@ -1211,30 +1211,30 @@ def render_index() -> str:
             </div>
           </section>
           <section class="status-section" id="cicloSection">
-            <h2 class="section-title">Ciclo de Facturación Completo</h2>
-            <p class="section-subtitle">Días promedio por etapa: Pedido aprobado → Factura emitida → Validada por cliente → Asociada al complemento de pago SAT.</p>
+            <h2 class="section-title">Ciclo de Facturacion Completo</h2>
+            <p class="section-subtitle">Dias promedio por etapa: Pedido aprobado → Factura emitida → Validada por cliente → Asociada al complemento de pago SAT.</p>
             <div class="status-layout">
               <div class="table-wrap">
                 <table class="status-table">
-                  <thead><tr><th>Etapa</th><th>Promedio</th><th>Mediana</th><th>Máximo</th><th>N</th></tr></thead>
+                  <thead><tr><th>Etapa</th><th>Promedio</th><th>Mediana</th><th>Maximo</th><th>N</th></tr></thead>
                   <tbody id="cicloEtapasRows"></tbody>
                 </table>
               </div>
               <div class="ciclo-chart-wrap">
-                <canvas class="weekly-chart" id="cicloEtapasChart" width="560" height="280" aria-label="Gráfica de barras de días promedio por etapa del ciclo de facturación"></canvas>
+                <canvas class="weekly-chart" id="cicloEtapasChart" width="560" height="280" aria-label="Grafica de barras de dias promedio por etapa del ciclo de facturacion"></canvas>
                 <div class="chart-tooltip" id="cicloEtapasTooltip" hidden></div>
               </div>
             </div>
-            <p class="section-subtitle" style="margin-top:14px">Evolución del ciclo total promedio por periodo.</p>
+            <p class="section-subtitle" style="margin-top:14px">Evolucion del ciclo total promedio por periodo.</p>
             <div class="weekly-layout">
               <div class="table-wrap">
                 <table class="status-table">
-                  <thead><tr><th>Periodo</th><th>Ciclo total (días)</th></tr></thead>
+                  <thead><tr><th>Periodo</th><th>Ciclo total (dias)</th></tr></thead>
                   <tbody id="cicloTemporalRows"></tbody>
                 </table>
               </div>
               <div class="weekly-chart-wrap">
-                <canvas class="weekly-chart" id="cicloTemporalChart" width="760" height="320" aria-label="Gráfica de evolución del ciclo total por periodo"></canvas>
+                <canvas class="weekly-chart" id="cicloTemporalChart" width="760" height="320" aria-label="Grafica de evolucion del ciclo total por periodo"></canvas>
                 <div class="chart-tooltip" id="cicloTemporalTooltip" hidden></div>
               </div>
             </div>
@@ -1275,7 +1275,7 @@ def render_index() -> str:
 
           <section class="status-section" id="comprasAnticiposSection" hidden>
             <h2 class="section-title">Facturas de anticipo</h2>
-            <p class="section-subtitle">Pagos anticipados a proveedores por mes de emisión. Rojo: monto pendiente de vincular. Azul: monto vinculado a una factura definitiva. A medida que crece el azul, disminuye el rojo.</p>
+            <p class="section-subtitle">Pagos anticipados a proveedores por mes de emision. Rojo: monto pendiente de vincular. Azul: monto vinculado a una factura definitiva. A medida que crece el azul, disminuye el rojo.</p>
             <div class="compras-risk-strip" id="comprasAnticiposStats"></div>
             <div class="section-body">
               <div class="table-wrap">
@@ -1325,7 +1325,7 @@ def render_index() -> str:
           <div class="compras-composition-grid">
           <section class="status-section compras-composition" id="comprasTipoSection" hidden>
             <h2 class="section-title">Tipo de compra</h2>
-            <p class="section-subtitle">Participación por monto, ordenada de mayor a menor.</p>
+            <p class="section-subtitle">Participacion por monto, ordenada de mayor a menor.</p>
             <div class="composition-bars" id="comprasTipoBars"></div>
             <div class="section-body pie-layout">
               <div class="table-wrap">
@@ -1347,7 +1347,7 @@ def render_index() -> str:
 
           <section class="status-section compras-composition" id="comprasCfdiSection" hidden>
             <h2 class="section-title">Uso de CFDI</h2>
-            <p class="section-subtitle">Participación fiscal por monto, ordenada de mayor a menor.</p>
+            <p class="section-subtitle">Participacion fiscal por monto, ordenada de mayor a menor.</p>
             <div class="composition-bars" id="comprasCfdiBars"></div>
             <div class="section-body pie-layout">
               <div class="table-wrap">
@@ -1400,7 +1400,7 @@ def render_index() -> str:
 
           <section class="status-section" id="cobranzaTipoPagoSection" hidden>
             <h2 class="section-title">Tipo de pago</h2>
-            <p class="section-subtitle">Distribución de cobros por forma de pago del cliente.</p>
+            <p class="section-subtitle">Distribucion de cobros por forma de pago del cliente.</p>
             <div class="section-body pie-layout">
               <div class="table-wrap">
                 <table class="data-table">
@@ -1416,8 +1416,8 @@ def render_index() -> str:
           </section>
 
           <section class="status-section" id="cobranzaDiasSection" hidden>
-            <h2 class="section-title">Días de cobranza</h2>
-            <p class="section-subtitle">Lag entre la fecha de asociación a factura y la fecha de pago recibido.</p>
+            <h2 class="section-title">Dias de cobranza</h2>
+            <p class="section-subtitle">Lag entre la fecha de asociacion a factura y la fecha de pago recibido.</p>
             <div id="cobranzaDiasKpis" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
             <div class="section-body pie-layout">
               <div class="table-wrap">
@@ -1443,7 +1443,7 @@ def render_index() -> str:
 
 
           <section class="status-section" id="cobranzaCreditoActivoSection" hidden>
-            <h2 class="section-title">Top 10 clientes con crédito activo</h2>
+            <h2 class="section-title">Top 10 clientes con credito activo</h2>
             <p class="section-subtitle">Ranking por monto pendiente de cobro — suma de cotizaciones aprobadas sin pago registrado.</p>
             <div class="hbar-chart" id="cobranzaCreditoActivoChart"></div>
             <div class="chart-tooltip" id="cobranzaCreditoActivoTooltip" hidden></div>
@@ -1478,7 +1478,7 @@ def render_index() -> str:
 
           <section class="status-section" id="pagosTipoPagoSection" hidden>
             <h2 class="section-title">Tipo de pago</h2>
-            <p class="section-subtitle">Distribución de pagos por forma de pago a proveedores.</p>
+            <p class="section-subtitle">Distribucion de pagos por forma de pago a proveedores.</p>
             <div class="section-body pie-layout">
               <div class="table-wrap">
                 <table class="data-table">
@@ -1526,14 +1526,14 @@ def render_index() -> str:
           </section>
 
           <section class="status-section" id="gastosCategoriaSection" hidden>
-            <h2 class="section-title">Distribución por categoría</h2>
-            <p class="section-subtitle">Gasto total agrupado por categoría operativa.</p>
+            <h2 class="section-title">Distribucion por categoria</h2>
+            <p class="section-subtitle">Gasto total agrupado por categoria operativa.</p>
             <div class="status-layout">
               <div class="table-wrap">
                 <table class="status-table">
                   <thead>
                     <tr>
-                      <th>Categoría</th>
+                      <th>Categoria</th>
                       <th>Qty</th>
                       <th>Monto</th>
                       <th>% monto</th>
@@ -1544,7 +1544,7 @@ def render_index() -> str:
               </div>
               <div class="pie-panel">
                 <div class="pie-canvas-wrap">
-                  <canvas class="pie-chart" id="gastosCategoriaPie" width="520" height="520" aria-label="Categorías de gastos operativos"></canvas>
+                  <canvas class="pie-chart" id="gastosCategoriaPie" width="520" height="520" aria-label="Categorias de gastos operativos"></canvas>
                   <div class="pie-center" id="gastosCategoriaPieCenter"><strong>100%</strong><span>Monto</span></div>
                 </div>
                 <div class="chart-tooltip" id="gastosCategoriaTooltip" hidden></div>
@@ -1562,17 +1562,17 @@ def render_index() -> str:
 
           <section class="status-section" id="gastosTarjetaSection" hidden>
             <h2 class="section-title">Gasto por tarjeta</h2>
-            <p class="section-subtitle">Distribución por número de tarjeta — útil para conciliación bancaria.</p>
+            <p class="section-subtitle">Distribucion por numero de tarjeta — util para conciliacion bancaria.</p>
             <canvas id="gastosTarjetaChart" style="width:100%;display:block" aria-label="Gasto por tarjeta"></canvas>
             <div class="pie-tooltip" id="gastosTarjetaTooltip" hidden></div>
           </section>
 
           <section class="status-section" id="gastosFiscalSection" hidden>
-            <h2 class="section-title">Análisis fiscal</h2>
+            <h2 class="section-title">Analisis fiscal</h2>
             <p class="section-subtitle">Desglose deducible vs no deducible e IVA acreditable.</p>
             <div id="gastosFiscalCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
             <div class="weekly-chart-wrap" style="height:240px">
-              <canvas class="weekly-chart" id="gastosFiscalChart" width="760" height="240" aria-label="Análisis fiscal: deducible vs no deducible" style="width:100%;height:100%;display:block"></canvas>
+              <canvas class="weekly-chart" id="gastosFiscalChart" width="760" height="240" aria-label="Analisis fiscal: deducible vs no deducible" style="width:100%;height:100%;display:block"></canvas>
               <div class="chart-tooltip" id="gastosFiscalTooltip" hidden></div>
             </div>
           </section>
@@ -1639,7 +1639,7 @@ def render_index() -> str:
                   <div class="pie-center" id="logisticaEstadoPieCenter"><strong>100%</strong><span>Pedidos</span></div>
                 </div>
                 <div class="chart-tooltip" id="logisticaEstadoTooltip" hidden></div>
-                <canvas id="logisticaEstadoLegend" style="display:block;margin-top:8px"></canvas>
+                <div class="pie-legend" id="logisticaEstadoLegend"></div>
               </div>
             </div>
           </section>
@@ -1686,7 +1686,7 @@ def render_index() -> str:
 
           <section class="status-section" id="finanzasDevengadoSection" hidden>
             <h2 class="section-title">Ingreso vs Egreso — Base devengada</h2>
-            <p class="section-subtitle" id="finanzasDevengadoSubtitle">Facturación emitida vs Compras + Gastos operativos por periodo.</p>
+            <p class="section-subtitle" id="finanzasDevengadoSubtitle">Facturacion emitida vs Compras + Gastos operativos por periodo.</p>
             <div class="weekly-chart-wrap" style="height:360px;width:100%">
               <canvas class="weekly-chart" id="finanzasDevengadoChart" width="760" height="360" aria-label="Ingreso vs Egreso devengado" style="width:100%;height:100%;display:block"></canvas>
               <div class="chart-tooltip" id="finanzasDevengadoTooltip" hidden></div>
@@ -1704,7 +1704,7 @@ def render_index() -> str:
 
           <section class="status-section" id="finanzasWaterfallSection" hidden>
             <h2 class="section-title">Desglose de resultados</h2>
-            <p class="section-subtitle">Composición de ingresos, egresos y resultado — base devengada y base caja.</p>
+            <p class="section-subtitle">Composicion de ingresos, egresos y resultado — base devengada y base caja.</p>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px">
               <div>
                 <p style="font-size:12px;font-weight:600;color:#65717e;margin:0 0 6px 0;text-align:center">Base devengada</p>
@@ -1725,7 +1725,7 @@ def render_index() -> str:
 
           <section class="status-section" id="finanzasComparativoSection" hidden>
             <h2 class="section-title">Comparativo devengado vs caja</h2>
-            <p class="section-subtitle">Ingresos, egresos y resultado en ambas bases de medición.</p>
+            <p class="section-subtitle">Ingresos, egresos y resultado en ambas bases de medicion.</p>
             <canvas id="finanzasComparativoCanvas" style="width:100%;display:block"></canvas>
           </section>
 
@@ -2407,7 +2407,7 @@ def render_index() -> str:
       ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(esCantidad ? 'Barras: cantidad · Línea: tendencia' : 'Barras: monto facturado · Línea: tendencia', pad.left, 8);
+      ctx.fillText(esCantidad ? 'Barras: cantidad · Linea: tendencia' : 'Barras: monto facturado · Linea: tendencia', pad.left, 8);
     }
 
     function setActiveFacturacionTemporal(index, event) {
@@ -2548,9 +2548,9 @@ def render_index() -> str:
       if (event) { placeTooltipNear(cicloEtapasTooltip, event.clientX, event.clientY); }
       cicloEtapasTooltip.innerHTML = `
         <b>${escapeHtml(row.etapa)}</b>
-        <div><span>Promedio</span><strong>${row.avg !== null ? row.avg + ' días' : '—'}</strong></div>
-        <div><span>Mediana</span><strong>${row.med !== null ? row.med + ' días' : '—'}</strong></div>
-        <div><span>Máximo</span><strong>${row.max !== null ? row.max + ' días' : '—'}</strong></div>
+        <div><span>Promedio</span><strong>${row.avg !== null ? row.avg + ' dias' : '—'}</strong></div>
+        <div><span>Mediana</span><strong>${row.med !== null ? row.med + ' dias' : '—'}</strong></div>
+        <div><span>Maximo</span><strong>${row.max !== null ? row.max + ' dias' : '—'}</strong></div>
         <div><span>N</span><strong>${row.n}</strong></div>
       `;
       cicloEtapasTooltip.hidden = false;
@@ -2630,7 +2630,7 @@ def render_index() -> str:
       if (event) { placeTooltipNear(cicloTemporalTooltip, event.clientX, event.clientY); }
       cicloTemporalTooltip.innerHTML = `
         <b>${escapeHtml(row.etiqueta)}</b>
-        <div><span>Ciclo total prom.</span><strong>${row.avg_tot !== null ? row.avg_tot + ' días' : '—'}</strong></div>
+        <div><span>Ciclo total prom.</span><strong>${row.avg_tot !== null ? row.avg_tot + ' dias' : '—'}</strong></div>
       `;
       cicloTemporalTooltip.hidden = false;
     }
@@ -2642,9 +2642,9 @@ def render_index() -> str:
       cicloEtapasRows.innerHTML = etapas.map((e, index) => `
         <tr data-index="${index}">
           <td><span class="status-name" style="--status-color:${CICLO_COLORS[index % CICLO_COLORS.length]}"><span class="status-dot"></span>${escapeHtml(e.etapa)}</span></td>
-          <td>${e.avg !== null ? e.avg + ' días' : '—'}</td>
-          <td>${e.med !== null ? e.med + ' días' : '—'}</td>
-          <td>${e.max !== null ? e.max + ' días' : '—'}</td>
+          <td>${e.avg !== null ? e.avg + ' dias' : '—'}</td>
+          <td>${e.med !== null ? e.med + ' dias' : '—'}</td>
+          <td>${e.max !== null ? e.max + ' dias' : '—'}</td>
           <td>${e.n}</td>
         </tr>
       `).join('');
@@ -2655,7 +2655,7 @@ def render_index() -> str:
       cicloTemporalRows.innerHTML = temporal.map((p, index) => `
         <tr data-index="${index}">
           <td><strong>${escapeHtml(p.etiqueta)}</strong></td>
-          <td>${p.avg_tot !== null ? p.avg_tot + ' días' : '—'}</td>
+          <td>${p.avg_tot !== null ? p.avg_tot + ' dias' : '—'}</td>
         </tr>
       `).join('');
       setActiveCicloTemporal(null);
@@ -2993,7 +2993,7 @@ def render_index() -> str:
         const isMax = qty === maxQty;
         const isMin = qty === minQty && qty !== maxQty;
         const badge = isMax
-          ? `<span class="tipo-badge tipo-badge-max">Más usado</span>`
+          ? `<span class="tipo-badge tipo-badge-max">Mas usado</span>`
           : isMin
           ? `<span class="tipo-badge tipo-badge-min">Menos usado</span>`
           : '';
@@ -3224,7 +3224,7 @@ def render_index() -> str:
       temporalSectionTitle.textContent = mensual ? '1.2 Comportamiento mensual' : '1.2 Comportamiento semanal';
       temporalSectionSubtitle.textContent = mensual ? 'Agrupado por mes calendario del periodo seleccionado' : 'S1=1-7 · S2=8-14 · S3=15-21 · S4=22-28 · S5=29-fin de mes';
       temporalTableHeading.textContent = mensual ? 'Mes' : 'Sem';
-      tiemposTemporalTitle.textContent = mensual ? 'Promedio de días por mes' : 'Promedio de días por semana';
+      tiemposTemporalTitle.textContent = mensual ? 'Promedio de dias por mes' : 'Promedio de dias por semana';
       semanaChart.setAttribute('aria-label', mensual ? 'Grafica de barras y lineas de tendencia de cotizado contra aprobado por mes' : 'Grafica de barras y lineas de tendencia de cotizado contra aprobado por semana');
       tiemposSemanCanvas.setAttribute('aria-label', mensual ? 'Grafica de barras de dias promedio de aprobacion por mes' : 'Grafica de barras de dias promedio de aprobacion por semana');
     }
@@ -3237,18 +3237,18 @@ def render_index() -> str:
       if (!stats.n_con_datos && !stats.n_sin_fechas) { tiemposAprSection.hidden = true; return; }
 
       if (stats.n_sin_fechas > 0) {
-        tiemposAprAlerta.textContent = `⚠️ ${stats.n_sin_fechas} cotización${stats.n_sin_fechas > 1 ? 'es aprobadas no tienen' : ' aprobada no tiene'} fecha de aprobación registrada — excluida${stats.n_sin_fechas > 1 ? 's' : ''} del análisis.`;
+        tiemposAprAlerta.textContent = `⚠️ ${stats.n_sin_fechas} cotizacion${stats.n_sin_fechas > 1 ? 'es aprobadas no tienen' : ' aprobada no tiene'} fecha de aprobacion registrada — excluida${stats.n_sin_fechas > 1 ? 's' : ''} del analisis.`;
         tiemposAprAlerta.hidden = false;
       } else { tiemposAprAlerta.hidden = true; }
 
       tiemposAprKpis.innerHTML = [
-        { label: 'Promedio',      value: `${stats.promedio} días`,            color: '#276f86' },
-        { label: 'Mediana',       value: `${stats.mediana} días`,             color: '#159895' },
-        { label: 'Máximo',        value: `${stats.maximo} días`,              color: '#d96058' },
+        { label: 'Promedio',      value: `${stats.promedio} dias`,            color: '#276f86' },
+        { label: 'Mediana',       value: `${stats.mediana} dias`,             color: '#159895' },
+        { label: 'Maximo',        value: `${stats.maximo} dias`,              color: '#d96058' },
         { label: 'Con datos',     value: formatNumber(stats.n_con_datos),     color: '#5b6673' },
       ].map((k) => `<div class="tiempos-kpi" style="border-left-color:${k.color}"><strong style="color:${k.color}">${escapeHtml(k.value)}</strong><span>${escapeHtml(k.label)}</span></div>`).join('');
 
-      const rangoColors = { 'Mismo día': '#57c5b6', '1-3 días': '#159895', '4-7 días': '#d0b56b', '>7 días': '#d96058' };
+      const rangoColors = { 'Mismo dia': '#57c5b6', '1-3 dias': '#159895', '4-7 dias': '#d0b56b', '>7 dias': '#d96058' };
       const totalRangos = rangos.reduce((s, r) => s + Number(r.n || 0), 0);
       tiemposAprRangos.innerHTML = rangos.map((r) => {
         const pct = totalRangos ? r.n / totalRangos : 0;
@@ -3293,11 +3293,11 @@ def render_index() -> str:
         attachBarTooltip(tiemposSemanCanvas, tiemposSemanTooltip, (bar) =>
           bar.n === 0
             ? `<b>${bar.label}</b><div><span>Sin datos</span></div>`
-            : `<b>${bar.label}</b><div><span>Promedio</span><strong>${bar.value.toFixed(1)} días</strong></div><div><span>Mediana</span><strong>${bar.med.toFixed(1)} días</strong></div><div><span>Cotizaciones</span><strong>${formatNumber(bar.n)}</strong></div>`
+            : `<b>${bar.label}</b><div><span>Promedio</span><strong>${bar.value.toFixed(1)} dias</strong></div><div><span>Mediana</span><strong>${bar.med.toFixed(1)} dias</strong></div><div><span>Cotizaciones</span><strong>${formatNumber(bar.n)}</strong></div>`
         );
         drawBarChart(tiemposHistCanvas, tiemposHistTooltip, histBars, { color: '#159895' });
         attachBarTooltip(tiemposHistCanvas, tiemposHistTooltip, (bar) =>
-          `<b>${bar.label === '8+d' ? 'Más de 7 días' : `${bar.dias} día${bar.dias === '1' ? '' : 's'}`}</b><div><span>Cotizaciones</span><strong>${formatNumber(bar.value)}</strong></div><div><span>%</span><strong>${formatPercent(totalHist ? bar.value / totalHist : 0)}</strong></div>`
+          `<b>${bar.label === '8+d' ? 'Mas de 7 dias' : `${bar.dias} dia${bar.dias === '1' ? '' : 's'}`}</b><div><span>Cotizaciones</span><strong>${formatNumber(bar.value)}</strong></div><div><span>%</span><strong>${formatPercent(totalHist ? bar.value / totalHist : 0)}</strong></div>`
         );
       });
     }
@@ -4007,15 +4007,15 @@ def render_index() -> str:
             ${metric('Principales', kpiValue(kpis, 'facturas_principales', 'number'), 'Primer registro de factura')}
             ${metric('Secundarias', kpiValue(kpis, 'facturas_secundarias', 'number'), 'Facturas adicionales')}
           </div>
-          ${metric('% secundarias', formatPercent(pctSecundarias), 'Participación de facturas adicionales')}
+          ${metric('% secundarias', formatPercent(pctSecundarias), 'Participacion de facturas adicionales')}
         </article>`,
         `<article class="kpi-card ${coberturaWarning}">
           <h2>Cobertura documental</h2>
           <div class="kpi-pair">
-            ${metric('Validación', kpiValue(kpis, 'cobertura_validacion_pct', 'percent'), 'Facturas con fecha de validación')}
-            ${metric('Asociación', kpiValue(kpis, 'cobertura_asociacion_pct', 'percent'), 'Facturas asociadas a OC')}
+            ${metric('Validacion', kpiValue(kpis, 'cobertura_validacion_pct', 'percent'), 'Facturas con fecha de validacion')}
+            ${metric('Asociacion', kpiValue(kpis, 'cobertura_asociacion_pct', 'percent'), 'Facturas asociadas a OC')}
           </div>
-          ${delta('Diferencia', difCobertura, 'Validación menos asociación')}
+          ${delta('Diferencia', difCobertura, 'Validacion menos asociacion')}
         </article>`,
         `<article class="kpi-card ${cancelacionesWarning}">
           <h2>Cancelaciones</h2>
@@ -4050,7 +4050,7 @@ def render_index() -> str:
       try {
         const response = await fetch('/api/dashboard/facturacion');
         const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los KPIs de facturación.');
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los KPIs de facturacion.');
         renderFacturacion(body);
         facturacionLoaded = true;
       } catch (error) {
@@ -4398,7 +4398,7 @@ def render_index() -> str:
           <div><span>Facturas</span><strong>${formatNumber(d.n)}</strong></div>
           <div><span>Subtotal</span><strong>${formatMoney(d.sub)}</strong></div>
           <div><span>Total c/IVA</span><strong>${formatMoney(d.tot)}</strong></div>
-          <div><span>Participación</span><strong>${formatPercent(d.pct || 0)}</strong></div>
+          <div><span>Participacion</span><strong>${formatPercent(d.pct || 0)}</strong></div>
         `,
       });
       comprasProvSection.hidden = false;
@@ -4688,7 +4688,7 @@ def render_index() -> str:
       const comparison = body.management?.comparison || {};
       const concentration = body.management?.concentration || {};
       const hasComparison = comparison.amount_change_pct != null;
-      const amountDirection = hasComparison && comparison.amount_change_pct > 0 ? 'Subió' : 'Bajó';
+      const amountDirection = hasComparison && comparison.amount_change_pct > 0 ? 'Subio' : 'Bajo';
       const comparisonClass = hasComparison && comparison.amount_change_pct > 0 ? 'warning' : 'primary';
       const comparisonValue = hasComparison ? formatPercent(Math.abs(comparison.amount_change_pct)) : '—';
       const comparisonNote = hasComparison
@@ -4707,20 +4707,20 @@ def render_index() -> str:
           </div>
         </article>`,
         `<article class="kpi-card ${comparisonClass}">
-          <h2>Variación del periodo</h2>
+          <h2>Variacion del periodo</h2>
           <div class="kpi-pair">
-            ${metric(hasComparison ? amountDirection + ' en monto' : 'Variación monto', comparisonValue, comparisonNote)}
-            ${metric('Variación cantidad', comparison.quantity_change_pct == null ? '—' : formatPercent(comparison.quantity_change_pct), 'Solo periodos completos')}
+            ${metric(hasComparison ? amountDirection + ' en monto' : 'Variacion monto', comparisonValue, comparisonNote)}
+            ${metric('Variacion cantidad', comparison.quantity_change_pct == null ? '—' : formatPercent(comparison.quantity_change_pct), 'Solo periodos completos')}
           </div>
           <p class="kpi-note">Los periodos parciales y sin cobertura no participan.</p>
         </article>`,
         `<article class="kpi-card">
-          <h2>Concentración</h2>
+          <h2>Concentracion</h2>
           <div class="kpi-pair">
             ${metric('Proveedor principal', formatPercent(concentration.top1_pct || 0), concentration.top_provider || 'Sin datos')}
-            ${metric('Top 5', formatPercent(concentration.top5_pct || 0), 'Participación sobre compras activas')}
+            ${metric('Top 5', formatPercent(concentration.top5_pct || 0), 'Participacion sobre compras activas')}
           </div>
-          <p class="kpi-note">Una concentración alta aumenta dependencia de proveedores clave.</p>
+          <p class="kpi-note">Una concentracion alta aumenta dependencia de proveedores clave.</p>
         </article>`,
       ];
       comprasKpiGrid.innerHTML = cards.join('');
@@ -4736,7 +4736,7 @@ def render_index() -> str:
         </div>
         <div class="compras-risk-item ${ivaRisk ? 'risk' : ''}">
           <span>Diferencia IVA</span><strong>${formatMoney(kpis.iva_diff_fc || 0)}</strong>
-          <small>${ivaRisk ? 'Supera $100 y 2% del IVA teórico' : 'Dentro del umbral de materialidad'}</small>
+          <small>${ivaRisk ? 'Supera $100 y 2% del IVA teorico' : 'Dentro del umbral de materialidad'}</small>
         </div>
         <div class="compras-risk-item ${cancelRisk ? 'warning' : ''}">
           <span>Cancelaciones</span><strong>${formatMoney(kpis.tot_canc || 0)}</strong>
@@ -4906,7 +4906,7 @@ def render_index() -> str:
       const anticipoIndex = Number(tr.dataset.index);
       const anticipo = comprasAnticiposState.rows[anticipoIndex];
       if (!anticipo) return;
-      // Cada anticipo se grafica en su mes de emisión.
+      // Cada anticipo se grafica en su mes de emision.
       const key = (anticipo.fecha || '').slice(0, 7);
       const idx = comprasAnticiposState.periodos.findIndex((p) => p.key === key);
       if (idx >= 0) setActiveComprasAnticipos(idx, event);
@@ -5017,7 +5017,7 @@ def render_index() -> str:
         tooltipFn: (d) => `<b>${escapeHtml(d.tipo)}</b>
           <div><span>Cobros</span><strong>${formatNumber(d.n)}</strong></div>
           <div><span>Monto</span><strong>${formatMoney(d.m)}</strong></div>
-          <div><span>Participación</span><strong>${formatPercent(Number(d.m || 0) / totalMonto)}</strong></div>`,
+          <div><span>Participacion</span><strong>${formatPercent(Number(d.m || 0) / totalMonto)}</strong></div>`,
       });
       cobranzaTipoPagoSection.hidden = false;
     }
@@ -5211,9 +5211,9 @@ def render_index() -> str:
       const n = Number(stats.n || 0);
       if (!n) { cobranzaDiasSection.hidden = true; return; }
       cobranzaDiasKpis.innerHTML = [
-        { label: 'Promedio', value: `${formatNumber(stats.avg)} días` },
-        { label: 'Mediana', value: `${formatNumber(stats.med)} días` },
-        { label: 'Máximo', value: `${formatNumber(stats.max)} días` },
+        { label: 'Promedio', value: `${formatNumber(stats.avg)} dias` },
+        { label: 'Mediana', value: `${formatNumber(stats.med)} dias` },
+        { label: 'Maximo', value: `${formatNumber(stats.max)} dias` },
         { label: 'Con dato', value: formatNumber(n) },
       ].map((item) => `<div class="tiempos-kpi"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>`).join('');
       cobranzaDiasRangosRows.innerHTML = rangos.map((row, index) => {
@@ -5228,7 +5228,7 @@ def render_index() -> str:
         barField: 'n', labelField: 'rango', color: '#d0b56b', formatValue: formatNumber,
         tooltipFn: (d) => `<b>${escapeHtml(d.rango)}</b>
           <div><span>Cobros</span><strong>${formatNumber(d.n)}</strong></div>
-          <div><span>Participación</span><strong>${formatPercent(d.pct)}</strong></div>`,
+          <div><span>Participacion</span><strong>${formatPercent(d.pct)}</strong></div>`,
       });
       cobranzaDiasSection.hidden = false;
     }
@@ -5286,23 +5286,23 @@ def render_index() -> str:
           ${metric('Monto pendiente', kpiValue(kpis, 'monto_pendiente_cobro', 'money'), 'Aprobado sin pago al cierre')}
           <div class="kpi-pair">
             ${metric('Cotizaciones', kpiValue(kpis, 'n_pendientes_cobro', 'number'), 'Pendientes de cobro')}
-            ${metric('Exposición', formatPercent(exposicion), 'Cartera / cobrado del periodo')}
+            ${metric('Exposicion', formatPercent(exposicion), 'Cartera / cobrado del periodo')}
           </div>
         </article>`,
         `<article class="kpi-card ${diasMediana > 30 ? 'warning' : 'accent'}">
           <h2>Salud de cobranza</h2>
           <div class="kpi-pair">
-            ${metric('Mediana', `${formatNumber(diasMediana)} días`, 'Asociación a factura → pago')}
-            ${metric('Más de 30 días', formatPercent(mayor30), 'Sobre cobros con fechas completas')}
+            ${metric('Mediana', `${formatNumber(diasMediana)} dias`, 'Asociacion a factura → pago')}
+            ${metric('Mas de 30 dias', formatPercent(mayor30), 'Sobre cobros con fechas completas')}
           </div>
           <div class="kpi-pair">
-            ${metric('Cobertura del cálculo', formatPercent(cobertura), `${formatNumber(kpis.n_con_lag || 0)} de ${formatNumber(kpis.cobros_principales || 0)} cobros`)}
+            ${metric('Cobertura del calculo', formatPercent(cobertura), `${formatNumber(kpis.n_con_lag || 0)} de ${formatNumber(kpis.cobros_principales || 0)} cobros`)}
             ${metric('Segundos cobros', formatNumber(nSec), 'Referenciales, no suman al ingreso')}
           </div>
         </article>`,
       ].join('');
       cobranzaHealthStrip.innerHTML = [
-        `<span class="cobranza-health-item ${diasMediana > 30 ? 'risk' : ''}"><strong>${formatNumber(diasMediana)} días</strong> mediana de cobranza</span>`,
+        `<span class="cobranza-health-item ${diasMediana > 30 ? 'risk' : ''}"><strong>${formatNumber(diasMediana)} dias</strong> mediana de cobranza</span>`,
         `<span class="cobranza-health-item ${cobertura < 0.9 ? 'warning' : ''}"><strong>${formatPercent(cobertura)}</strong> cobertura de fechas</span>`,
         `<span class="cobranza-health-item ${nCalidad ? 'warning' : ''}"><strong>${formatNumber(nCalidad)}</strong> incidencias de captura</span>`,
         `<span class="cobranza-health-item ${nSec ? 'warning' : ''}"><strong>${formatNumber(nSec)}</strong> segundos cobros sin monto exacto</span>`,
@@ -5351,7 +5351,7 @@ def render_index() -> str:
       }
     }
 
-    // ── MÓDULO PAGOS A PROVEEDORES ────────────────────────────────────────────
+    // ── MODULO PAGOS A PROVEEDORES ────────────────────────────────────────────
     const PAGOS_TP_COLORS = ['#276f86','#d0b56b','#d96058','#57c5b6','#8a6f35','#159895','#5b6673','#1d5368','#c6ad6a','#225e73'];
 
     function renderPagosTipoPagoPie(activeIndex = null) {
@@ -5640,7 +5640,7 @@ def render_index() -> str:
       }
     }
 
-    // ── MÓDULO GASTOS OPERATIVOS ──────────────────────────────────────────────
+    // ── MODULO GASTOS OPERATIVOS ──────────────────────────────────────────────
     const GASTOS_CAT_COLORS = [
       '#276f86',  // teal primario
       '#d0b56b',  // dorado acento
@@ -6038,7 +6038,7 @@ def render_index() -> str:
       }
     }
 
-    // ── MÓDULO LOGÍSTICA ───────────────────────────────────────────────────────
+    // ── MODULO LOGISTICA ───────────────────────────────────────────────────────
     const LOG_LOCAL_COLOR   = '#276f86';
     const LOG_FORANEO_COLOR = '#d0b56b';
     const LOG_LENTO_COLOR   = '#d96058';
@@ -6048,20 +6048,84 @@ def render_index() -> str:
     let logisticaLeadState = {};
     let logisticaEstadoChart = { slices: [], activeIndex: null };
 
+    function renderLogisticaEstadoPieChart(activeIndex) {
+      const pie = document.querySelector('#logisticaEstadoPie');
+      if (!pie || !logisticaEstadoChart.slices.length) return;
+      const ctx = pie.getContext('2d');
+      const rect = pie.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      pie.width  = Math.max(1, Math.round(rect.width  * dpr));
+      pie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.43;
+      const inner  = radius * 0.58;
+      logisticaEstadoChart.slices.forEach((sl, idx) => {
+        const active = idx === activeIndex;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (active ? 8 : 0), sl.start, sl.end);
+        ctx.closePath();
+        ctx.fillStyle = sl.color;
+        ctx.globalAlpha = activeIndex == null || active ? 1 : 0.42;
+        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = active ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd'; ctx.fill();
+      ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function logisticaEstadoSliceAtEvent(event) {
+      const pie = document.querySelector('#logisticaEstadoPie');
+      const rect = pie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top  - rect.height / 2;
+      const dist = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inn   = outer * 0.52;
+      if (dist < inn || dist > outer) return -1;
+      let a = Math.atan2(y, x);
+      if (a < -Math.PI / 2) a += Math.PI * 2;
+      return logisticaEstadoChart.slices.findIndex(sl => a >= sl.start && a <= sl.end);
+    }
+
+    function setActiveLogisticaEstado(index, event) {
+      const pieCenter = document.querySelector('#logisticaEstadoPieCenter');
+      const legend    = document.querySelector('#logisticaEstadoLegend');
+      const tbody     = document.querySelector('#logisticaEstadoRows');
+      const tooltip   = document.querySelector('#logisticaEstadoTooltip');
+      logisticaEstadoChart.activeIndex = index >= 0 ? index : null;
+      renderLogisticaEstadoPieChart(logisticaEstadoChart.activeIndex);
+      if (legend) legend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === logisticaEstadoChart.activeIndex));
+      if (tbody)  tbody.querySelectorAll('tr').forEach((row, i)   => row.classList.toggle('active',  i === logisticaEstadoChart.activeIndex));
+      if (logisticaEstadoChart.activeIndex === null) {
+        if (tooltip)   tooltip.hidden = true;
+        if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
+        return;
+      }
+      const sl = logisticaEstadoChart.slices[logisticaEstadoChart.activeIndex];
+      if (pieCenter) pieCenter.innerHTML = `<strong>${(sl.pct*100).toFixed(0)}%</strong><span>${escapeHtml(sl.estado.length > 10 ? sl.estado.slice(0, 9) + '...' : sl.estado)}</span>`;
+      if (tooltip) {
+        if (event) placeTooltipNear(tooltip, event.clientX, event.clientY);
+        tooltip.innerHTML = `<b>${escapeHtml(sl.estado)}</b><div><span>Pedidos</span><strong>${formatNumber(sl.n)}</strong></div><div><span>%</span><strong>${(sl.pct*100).toFixed(0)}%</strong></div>`;
+        tooltip.hidden = false;
+      }
+    }
+
     function renderLogisticaEstado(seriesEstado) {
       const section = document.querySelector('#logisticaEstadoSection');
       if (!seriesEstado || !seriesEstado.length) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
       const totalN = seriesEstado.reduce((s, r) => s + (r.n || 0), 0);
-      const tbody = document.querySelector('#logisticaEstadoRows');
-      const pieCanvas = document.querySelector('#logisticaEstadoPie');
-      const pieCenter = document.querySelector('#logisticaEstadoPieCenter');
-      const legendCanvas = document.querySelector('#logisticaEstadoLegend');
-      const tooltip = document.querySelector('#logisticaEstadoTooltip');
       const FALLBACK_COLORS = ['#57c5b6','#276f86','#d0b56b','#d96058','#8a6f35','#5b6673'];
       const colors = seriesEstado.map((r, i) => LOG_ESTADO_COLORS[r.estado] || FALLBACK_COLORS[i % FALLBACK_COLORS.length]);
 
-      // Construir slices (dona)
+      // Construir slices
       let angle = -Math.PI / 2;
       logisticaEstadoChart.slices = seriesEstado.map((r, i) => {
         const pct = totalN ? r.n / totalN : 0;
@@ -6070,82 +6134,61 @@ def render_index() -> str:
         angle += sweep;
         return s;
       });
-      logisticaEstadoChart.activeIndex = null;
 
-      function drawPie(activeIndex) {
-        if (!pieCanvas) return;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const rect = pieCanvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
-        pieCanvas.width  = Math.max(1, Math.round(rect.width  * dpr));
-        pieCanvas.height = Math.max(1, Math.round(rect.height * dpr));
-        const ctx = pieCanvas.getContext('2d');
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        const cx = rect.width / 2, cy = rect.height / 2;
-        const radius = Math.min(rect.width, rect.height) * 0.43;
-        const inner  = radius * 0.58;
-        logisticaEstadoChart.slices.forEach((sl, idx) => {
-          const active = idx === activeIndex;
-          ctx.beginPath(); ctx.moveTo(cx, cy);
-          ctx.arc(cx, cy, radius + (active ? 8 : 0), sl.start, sl.end);
-          ctx.closePath();
-          ctx.fillStyle = sl.color;
-          ctx.globalAlpha = activeIndex == null || active ? 1 : 0.42;
-          ctx.fill(); ctx.globalAlpha = 1;
-          ctx.lineWidth = active ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
-        });
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2); ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2);
-        ctx.fillStyle = '#fbfcfd'; ctx.fill();
-        ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+      // Tabla con data-index para interactividad
+      const tbody = document.querySelector('#logisticaEstadoRows');
+      if (tbody) {
+        tbody.innerHTML = seriesEstado.map((r, index) =>
+          `<tr data-index="${index}"><td><span class="status-name" style="--status-color:${colors[index]}"><span class="status-dot"></span>${escapeHtml(r.estado)}</span></td><td>${formatNumber(r.n)}</td><td>${totalN ? (r.n/totalN*100).toFixed(0)+'%' : '—'}</td></tr>`
+        ).join('');
       }
-      drawPie(null);
-      if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
-      drawPieLegendCanvas(legendCanvas, seriesEstado.map(r => r.estado), colors);
 
-      // Tabla
-      if (tbody) tbody.innerHTML = seriesEstado.map(r =>
-        `<tr><td>${escapeHtml(r.estado)}</td><td>${formatNumber(r.n)}</td><td>${totalN ? (r.n/totalN*100).toFixed(0)+'%' : '—'}</td></tr>`
-      ).join('');
+      // Leyenda HTML (igual que Gastos Categoria)
+      const legend = document.querySelector('#logisticaEstadoLegend');
+      if (legend) {
+        legend.innerHTML = logisticaEstadoChart.slices.map((sl, index) => `
+          <button class="legend-item" type="button" style="--status-color:${sl.color}" data-index="${index}">
+            <span class="legend-swatch"></span>
+            <span>${escapeHtml(sl.estado)}</span>
+            <strong>${(sl.pct*100).toFixed(0)}%</strong>
+          </button>
+        `).join('');
+      }
 
-      // Interactividad dona
-      if (pieCanvas) {
-        pieCanvas.addEventListener('mousemove', (event) => {
-          const rect2 = pieCanvas.getBoundingClientRect();
-          const x = event.clientX - rect2.left - rect2.width/2;
-          const y = event.clientY - rect2.top  - rect2.height/2;
-          const dist = Math.hypot(x, y);
-          const outer = Math.min(rect2.width, rect2.height) * 0.47;
-          const inn   = outer * 0.52;
-          if (dist < inn || dist > outer) {
-            logisticaEstadoChart.activeIndex = null; drawPie(null);
-            if (tooltip) tooltip.hidden = true;
-            if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
-            return;
-          }
-          let a = Math.atan2(y, x); if (a < -Math.PI/2) a += Math.PI*2;
-          const idx = logisticaEstadoChart.slices.findIndex(sl => a >= sl.start && a <= sl.end);
-          if (idx >= 0) {
-            logisticaEstadoChart.activeIndex = idx; drawPie(idx);
-            const sl = logisticaEstadoChart.slices[idx];
-            if (pieCenter) pieCenter.innerHTML = `<strong>${(sl.pct*100).toFixed(0)}%</strong><span>${escapeHtml(sl.estado)}</span>`;
-            if (tooltip) {
-              tooltip.innerHTML = `<b>${escapeHtml(sl.estado)}</b><div><span>Pedidos</span><strong>${formatNumber(sl.n)}</strong></div><div><span>%</span><strong>${(sl.pct*100).toFixed(0)}%</strong></div>`;
-              tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
-            }
-          }
+      setActiveLogisticaEstado(null);
+
+      // Event listeners: dona
+      const pie = document.querySelector('#logisticaEstadoPie');
+      if (pie) {
+        pie.addEventListener('mousemove', (event) => {
+          const idx = logisticaEstadoSliceAtEvent(event);
+          if (idx >= 0) setActiveLogisticaEstado(idx, event);
+          else setActiveLogisticaEstado(null);
         });
-        pieCanvas.addEventListener('mouseleave', () => {
-          logisticaEstadoChart.activeIndex = null; drawPie(null);
-          if (tooltip) tooltip.hidden = true;
-          if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
-        });
+        pie.addEventListener('mouseleave', () => setActiveLogisticaEstado(null));
         if (typeof ResizeObserver !== 'undefined') {
-          new ResizeObserver(() => drawPie(logisticaEstadoChart.activeIndex)).observe(pieCanvas);
+          new ResizeObserver(() => renderLogisticaEstadoPieChart(logisticaEstadoChart.activeIndex)).observe(pie);
         }
+      }
+
+      // Event listeners: leyenda
+      if (legend) {
+        legend.addEventListener('mousemove', (event) => {
+          const item = event.target.closest('.legend-item');
+          if (!item) return;
+          setActiveLogisticaEstado(Number(item.dataset.index), event);
+        });
+        legend.addEventListener('mouseleave', () => setActiveLogisticaEstado(null));
+      }
+
+      // Event listeners: tabla
+      if (tbody) {
+        tbody.addEventListener('mousemove', (event) => {
+          const row = event.target.closest('tr');
+          if (!row) return;
+          setActiveLogisticaEstado(Number(row.dataset.index), event);
+        });
+        tbody.addEventListener('mouseleave', () => setActiveLogisticaEstado(null));
       }
     }
 
@@ -6295,7 +6338,7 @@ def render_index() -> str:
       }
     }
 
-    // ── MÓDULO FINANZAS ────────────────────────────────────────────────────────
+    // ── MODULO FINANZAS ────────────────────────────────────────────────────────
     const FINANZAS_INGRESO_COLOR = '#57c5b6';   // teal claro — ingresos
     const FINANZAS_EGRESO_COLOR  = '#d96058';   // rojo alerta — egresos
     const FINANZAS_COBRADO_COLOR = '#276f86';   // teal primario — cobrado
@@ -6313,7 +6356,7 @@ def render_index() -> str:
       const subtitle = temporal.chart_suffix ? 'Comportamiento ' + temporal.chart_suffix : '';
       const devSubEl = document.querySelector('#finanzasDevengadoSubtitle');
       const cajaSubEl = document.querySelector('#finanzasCajaSubtitle');
-      if (devSubEl) devSubEl.textContent = 'Facturación emitida vs Compras + Gastos op. ' + subtitle;
+      if (devSubEl) devSubEl.textContent = 'Facturacion emitida vs Compras + Gastos op. ' + subtitle;
       if (cajaSubEl) cajaSubEl.textContent = 'Cobranza recibida vs Pagos + Gastos op. ' + subtitle;
 
       if (devSection) devSection.hidden = false;
@@ -6395,7 +6438,7 @@ def render_index() -> str:
            </div>`
         ).join('');
       }
-      // Gráfica de barras horizontal del IVA split
+      // Grafica de barras horizontal del IVA split
       if (ivaSplit && ivaSplit.length) {
         drawGroupedBarChart(
           document.querySelector('#finanzasIvaChart'),
@@ -6443,7 +6486,7 @@ def render_index() -> str:
 
     function setActiveModule(moduleName) {
       // Al salir de Gastos Operativos liberar buffers de canvas (~38MB) y
-      // permitir re-render limpio al volver (evita acumulación de memoria).
+      // permitir re-render limpio al volver (evita acumulacion de memoria).
       if (canvas.dataset.module === 'gastos_operativos' && moduleName !== 'gastos_operativos') {
         _gastosReleaseCanvases();
         gastosOperativosLoaded = false;
@@ -6664,8 +6707,8 @@ def create_app(
             try:
                 validate_webhook_success(webhook)
             except WebhookResponseError:
-                # 502/524: proxy o Cloudflare cortó la conexión antes de que n8n respondiera,
-                # pero n8n sigue corriendo y depositará los archivos. Continuamos esperándolos.
+                # 502/524: proxy o Cloudflare corto la conexion antes de que n8n respondiera,
+                # pero n8n sigue corriendo y depositara los archivos. Continuamos esperandolos.
                 if webhook["status_code"] not in (502, 524):
                     raise
             csv_path = wait_for_changed_cotizaciones(request.app.state.data_dir, before)
@@ -6760,8 +6803,8 @@ def create_app(
 
     @app.post("/api/regenerar-snapshot", status_code=status.HTTP_200_OK)
     def regenerar_snapshot(payload: RegenerarRequest, request: Request) -> dict:
-        """Regenera los snapshots de ventas y facturación con los archivos actuales en data/.
-        Útil cuando el webhook falla (502) pero los CSV ya se descargaron.
+        """Regenera los snapshots de ventas y facturacion con los archivos actuales en data/.
+        Util cuando el webhook falla (502) pero los CSV ya se descargaron.
         No mueve archivos ni llama a n8n."""
         try:
             fecha_desde = parse_iso_date(payload.fecha_desde, "fecha_desde").strftime("%Y-%m-%d")

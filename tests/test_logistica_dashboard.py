@@ -147,7 +147,7 @@ class TestAllowlistRegex(unittest.TestCase):
         self.assertIsNone(_RE_SEG_INCOMPLETOS.match("Pedidos_Entregados_En_El_Periodo_2026-06-08_11-43.csv"))
 
 
-# ─── KPIs básicos ─────────────────────────────────────────────────────────────
+# ─── KPIs basicos ─────────────────────────────────────────────────────────────
 
 class TestKpisBasicos(unittest.TestCase):
 
@@ -212,7 +212,7 @@ class TestKpisBasicos(unittest.TestCase):
 class TestLeadTimes(unittest.TestCase):
 
     def test_ciclo_calculado_correctamente(self):
-        """aprob 2026-05-08, entrega 2026-05-12 → ciclo = 4 días"""
+        """aprob 2026-05-08, entrega 2026-05-12 → ciclo = 4 dias"""
         et = [_pedido_entregado()]
         r = build_logistica_dashboard([], [], et, [], **PERIODO)
         self.assertEqual(r["kpis"]["n_con_lead"], 1)
@@ -241,7 +241,7 @@ class TestLeadTimes(unittest.TestCase):
     def test_lead_en_et_positivo(self):
         et = [_pedido_entregado()]
         r = build_logistica_dashboard([], [], et, [], **PERIODO)
-        # envio 2026-05-10, entrega 2026-05-12 → 2 días
+        # envio 2026-05-10, entrega 2026-05-12 → 2 dias
         self.assertEqual(r["kpis"]["lead_envio_entrega_med"], 2.0)
 
     def test_sin_fecha_envio_cuenta_n_sin_fecha(self):
@@ -320,7 +320,7 @@ class TestSeriesTablas(unittest.TestCase):
         self.assertEqual(len(r["series"]["lead_hist"]), 6)
 
     def test_lead_hist_ciclo_4_en_bin_correcto(self):
-        """ciclo 4 días → bin '4–7 d'"""
+        """ciclo 4 dias → bin '4–7 d'"""
         et = [_pedido_entregado()]
         r = build_logistica_dashboard([], [], et, [], **PERIODO)
         bins = {b["rango"]: b["n"] for b in r["series"]["lead_hist"]}
@@ -340,7 +340,7 @@ class TestSeriesTablas(unittest.TestCase):
         self.assertEqual(tabla[1]["estado"], "Completado")
 
 
-# ─── Señales ──────────────────────────────────────────────────────────────────
+# ─── Senales ──────────────────────────────────────────────────────────────────
 
 class TestSenales(unittest.TestCase):
 
@@ -363,7 +363,7 @@ class TestSenales(unittest.TestCase):
         self.assertIn("captura_fecha_incompleta", tipos)
 
     def test_entrega_lenta_genera_senal(self):
-        """Ciclo > 10 días con 3+ pedidos → señal entrega_lenta"""
+        """Ciclo > 10 dias con 3+ pedidos → senal entrega_lenta"""
         def _et_lento(i, dias):
             return _pedido_entregado(**{
                 "Pedidos_Entregados_En_El_Periodo_id": f"uuid-et-{i}",
@@ -371,13 +371,13 @@ class TestSenales(unittest.TestCase):
                 "Pedidos_Entregados_En_El_Periodo_fecha_envio": '{"start":"2026-05-05","end":null,"time_zone":null}',
                 "Pedidos_Entregados_En_El_Periodo_fecha_entrega": f"2026-05-{1+dias:02d}T15:00:00.000-06:00",
             })
-        et = [_et_lento(i, 15) for i in range(3)]  # ciclo 15 días cada uno
+        et = [_et_lento(i, 15) for i in range(3)]  # ciclo 15 dias cada uno
         r = build_logistica_dashboard([], [], et, [], **PERIODO)
         tipos = [s["tipo"] for s in r["signals"]]
         self.assertIn("entrega_lenta", tipos)
 
     def test_ciclo_corto_no_genera_senal_lenta(self):
-        et = [_pedido_entregado()]  # ciclo 4 días
+        et = [_pedido_entregado()]  # ciclo 4 dias
         r = build_logistica_dashboard([], [], et, [], **PERIODO)
         tipos = [s["tipo"] for s in r["signals"]]
         self.assertNotIn("entrega_lenta", tipos)

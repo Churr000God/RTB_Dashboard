@@ -182,7 +182,7 @@ class VentasDashboardTests(unittest.TestCase):
         self.assertEqual(kpis["ariba_cotizadas"], 2)            # cot-1 + cot-4
         self.assertEqual(kpis["monto_ariba_cotizado"], 2320)    # 1160 + 1160
         self.assertAlmostEqual(kpis["ticket_ariba_cotizado"], 1160.0)
-        # Ariba conversión interna (aprobado/cotizado dentro de Ariba)
+        # Ariba conversion interna (aprobado/cotizado dentro de Ariba)
         self.assertAlmostEqual(kpis["ariba_conv_q"], 1 / 2)     # 1 apr / 2 cot Ariba
         self.assertAlmostEqual(kpis["ariba_conv_m"], 1160 / 2320)
         self.assertAlmostEqual(kpis["diferencia_ariba_conv"], (1160 / 2320) - (1 / 2))
@@ -210,12 +210,12 @@ class TopClientesEnrichmentTests(unittest.TestCase):
         result = compute_ventas(self.sample_rows())
         top = dict(result["top_cli_cot"])
 
-        # ACME: cotizó 1, monto 1160, aprobada 1, ma 1160
+        # ACME: cotizo 1, monto 1160, aprobada 1, ma 1160
         self.assertIn("ACME", top)
         self.assertEqual(top["ACME"]["na"], 1)
         self.assertAlmostEqual(top["ACME"]["ma"], 1160.0)
 
-        # BETA: cotizó 1, monto 2320, NO aprobada
+        # BETA: cotizo 1, monto 2320, NO aprobada
         self.assertIn("BETA", top)
         self.assertEqual(top["BETA"]["na"], 0)
         self.assertAlmostEqual(top["BETA"]["ma"], 0.0)
@@ -226,7 +226,7 @@ class TopClientesEnrichmentTests(unittest.TestCase):
         result = compute_ventas(self.sample_rows())
         top = dict(result["top_cli_apr"])
 
-        # ACME: aprobada 1 (ma 1160), cotizó 1 (m_cot 1160)
+        # ACME: aprobada 1 (ma 1160), cotizo 1 (m_cot 1160)
         self.assertIn("ACME", top)
         self.assertEqual(top["ACME"]["n_cot"], 1)
         self.assertAlmostEqual(top["ACME"]["m_cot"], 1160.0)
@@ -362,7 +362,7 @@ class TiemposAprobacionTests(unittest.TestCase):
 
         result = compute_ventas(self.sample_rows())
         hist = result["hist_apr"]
-        # cot-1: delta=0 (mismo día) → bucket "0"
+        # cot-1: delta=0 (mismo dia) → bucket "0"
         self.assertIn("0", hist)
         self.assertEqual(hist["0"], 1)
         # cot-3: created 2026-04-30, approved 2026-05-02 → delta=2 → bucket "2"
@@ -402,7 +402,7 @@ class TiemposAprobacionTests(unittest.TestCase):
 
         rangos = ta["rangos"]
         self.assertIsInstance(rangos, list)
-        self.assertTrue(any(r["rango"] == "Mismo día" for r in rangos))
+        self.assertTrue(any(r["rango"] == "Mismo dia" for r in rangos))
 
         self.assertIn("semanal", ta)
         self.assertIn("histograma", ta)

@@ -7,7 +7,7 @@ PERIODO = {"fecha_desde": "2026-05-01", "fecha_hasta": "2026-05-31"}
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _periodos(*keys):
-    """Genera lista de periodos temporales stub con todas las métricas en 0."""
+    """Genera lista de periodos temporales stub con todas las metricas en 0."""
     return [
         {"key": k, "etiqueta": k, "monto": 0, "tot": 0, "pagos": 0, "cobros": 0, "gastos": 0}
         for k in keys
@@ -15,7 +15,7 @@ def _periodos(*keys):
 
 
 def _temporal_stub(periodos, kv_override=None):
-    """temporal con eje mínimo; permite sobreescribir métricas por key."""
+    """temporal con eje minimo; permite sobreescribir metricas por key."""
     rows = []
     for p in periodos:
         row = dict(p)
@@ -287,10 +287,10 @@ class TestAlineacionTemporal(unittest.TestCase):
 # ── TestEjeDesalineado ────────────────────────────────────────────────────
 
 class TestEjeDesalineado(unittest.TestCase):
-    """Módulo con menos keys que el eje de referencia — las keys faltantes aportan 0."""
+    """Modulo con menos keys que el eje de referencia — las keys faltantes aportan 0."""
 
     def setUp(self):
-        # Facturación tiene S1, S2, S3; compras solo tiene S2
+        # Facturacion tiene S1, S2, S3; compras solo tiene S2
         p_full = _periodos("S1", "S2", "S3")
         p_partial = _periodos("S2")
         self.result = _build(
@@ -301,7 +301,7 @@ class TestEjeDesalineado(unittest.TestCase):
         self.periodos = self.result["series"]["temporal"]["periodos"]
 
     def test_no_lanza(self):
-        # Solo verificar que llega aquí sin excepción
+        # Solo verificar que llega aqui sin excepcion
         self.assertEqual(len(self.periodos), 3)
 
     def test_S1_compras_cero(self):
@@ -364,20 +364,20 @@ class TestPendientes(unittest.TestCase):
 # ── TestSubDashboardVacio ─────────────────────────────────────────────────
 
 class TestSubDashboardVacio(unittest.TestCase):
-    """Sub-dashboards vacíos ({} o None) no lanzan excepción; aporte = 0."""
+    """Sub-dashboards vacios ({} o None) no lanzan excepcion; aporte = 0."""
 
     def test_None_no_lanza(self):
         try:
             r = build_finanzas_dashboard(None, None, None, None, None, **PERIODO)
         except Exception as exc:
-            self.fail(f"Lanzó excepción con sub-dashboards None: {exc}")
+            self.fail(f"Lanzo excepcion con sub-dashboards None: {exc}")
         self.assertAlmostEqual(r["kpis"]["utilidad_devengada"], 0.0, places=1)
 
     def test_dict_vacio_no_lanza(self):
         try:
             r = build_finanzas_dashboard({}, {}, {}, {}, {}, **PERIODO)
         except Exception as exc:
-            self.fail(f"Lanzó excepción con dicts vacíos: {exc}")
+            self.fail(f"Lanzo excepcion con dicts vacios: {exc}")
         self.assertAlmostEqual(r["kpis"]["flujo_caja_neto"], 0.0, places=1)
 
     def test_parcialmente_vacio(self):
@@ -446,7 +446,7 @@ class TestTablas(unittest.TestCase):
     def test_waterfall_egresos_negativos(self):
         for row in self.tables["waterfall_devengado"]:
             if row["tipo"] == "egreso":
-                self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' debería ser negativo")
+                self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' deberia ser negativo")
 
     def test_waterfall_caja_tiene_4_filas(self):
         self.assertEqual(len(self.tables["waterfall_caja"]), 4)
@@ -458,7 +458,7 @@ class TestTablas(unittest.TestCase):
     def test_waterfall_caja_egresos_negativos(self):
         for row in self.tables["waterfall_caja"]:
             if row["tipo"] == "egreso":
-                self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' debería ser negativo")
+                self.assertLessEqual(row["monto"], 0, f"'{row['concepto']}' deberia ser negativo")
 
     def test_iva_split_tiene_3_filas(self):
         self.assertEqual(len(self.tables["iva_split"]), 3)

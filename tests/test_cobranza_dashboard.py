@@ -80,7 +80,7 @@ class TestBuildCobranzaKpisBasicos(unittest.TestCase):
 
 
 class TestSecundariasNoSumanMonto(unittest.TestCase):
-    """La clave del módulo: secundarias NO se suman al ingreso."""
+    """La clave del modulo: secundarias NO se suman al ingreso."""
 
     def setUp(self):
         pp = [_pp(**{"Pedido Pago Total": "1000"})]
@@ -285,7 +285,7 @@ class TestInvariantes(unittest.TestCase):
 
 
 def _cot(**kw):
-    """Factory para fila de cotización."""
+    """Factory para fila de cotizacion."""
     base = {
         "Cotizacion_id": "cot-test-1",
         "Cotizacion_nombre": "COT-TEST",
@@ -305,7 +305,7 @@ def _cot(**kw):
 class TestPendientesCobro(unittest.TestCase):
 
     def _build_with_cots(self, pp_ids, cot_ids, cot_pagada_ids=None):
-        """pp_ids = IDs de cotización ya cobrados; cot_ids = todos los IDs de cotización en CSV."""
+        """pp_ids = IDs de cotizacion ya cobrados; cot_ids = todos los IDs de cotizacion en CSV."""
         pp = [_pp(**{"Pedido Pago ID": f"pp-{i}", "Pedido Pago Cotizacion": pid,
                      "Pedido Pago Total": "1000"})
               for i, pid in enumerate(pp_ids)]
@@ -338,7 +338,7 @@ class TestPendientesCobro(unittest.TestCase):
         cots = [
             _cot(**{"Cotizacion_id": "cot-APR", "Estado_cotizacion": "Aprobada"}),
             _cot(**{"Cotizacion_id": "cot-EXP", "Estado_cotizacion": "Expirada"}),
-            _cot(**{"Cotizacion_id": "cot-COT", "Estado_cotizacion": "En Cotización"}),
+            _cot(**{"Cotizacion_id": "cot-COT", "Estado_cotizacion": "En Cotizacion"}),
         ]
         r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
         # Solo la Aprobada cuenta como pendiente
@@ -371,7 +371,7 @@ class TestPendientesCobro(unittest.TestCase):
         self.assertIsNone(r["series"]["pendientes_temporal"])
 
     def test_pagos_fuera_de_periodo_aun_marcan_cobrada(self):
-        """Un cobro fuera del periodo analizado igual marca la cotización como cobrada."""
+        """Un cobro fuera del periodo analizado igual marca la cotizacion como cobrada."""
         pp = [_pp(**{
             "Pedido Pago Cotizacion": "cot-A",
             "Pedido Pago Fecha de pago ": "2026-04-01",  # fuera de PERIODO (mayo)
@@ -379,7 +379,7 @@ class TestPendientesCobro(unittest.TestCase):
         })]
         cots = [_cot(**{"Cotizacion_id": "cot-A"}), _cot(**{"Cotizacion_id": "cot-B"})]
         r = build_cobranza_dashboard(pp, [], cotizaciones=cots, **PERIODO)
-        # cot-A está pagada (aunque el cobro esté fuera de periodo), cot-B pendiente
+        # cot-A esta pagada (aunque el cobro este fuera de periodo), cot-B pendiente
         self.assertEqual(r["kpis"]["n_pendientes_cobro"], 1)
 
     def test_pago_posterior_al_cierre_no_elimina_cartera_historica(self):
@@ -411,11 +411,11 @@ class TestPendientesCobro(unittest.TestCase):
         ]
         r = build_cobranza_dashboard([], [], cotizaciones=cots, **PERIODO)
         buckets = {x["rango"]: x for x in r["series"]["cartera_antiguedad"]}
-        self.assertEqual(buckets["0-30 días"]["n"], 1)
-        self.assertEqual(buckets["31-60 días"]["n"], 2)
-        self.assertEqual(buckets["61-90 días"]["n"], 2)
-        self.assertEqual(buckets[">90 días"]["n"], 1)
-        self.assertAlmostEqual(buckets[">90 días"]["monto"], 600.0, places=2)
+        self.assertEqual(buckets["0-30 dias"]["n"], 1)
+        self.assertEqual(buckets["31-60 dias"]["n"], 2)
+        self.assertEqual(buckets["61-90 dias"]["n"], 2)
+        self.assertEqual(buckets[">90 dias"]["n"], 1)
+        self.assertAlmostEqual(buckets[">90 dias"]["monto"], 600.0, places=2)
 
     def test_pendientes_ordenan_por_antiguedad_y_monto(self):
         cots = [
@@ -428,7 +428,7 @@ class TestPendientesCobro(unittest.TestCase):
             [x["cotizacion_id"] for x in r["tables"]["pendientes"]],
             ["viejo-mayor", "viejo-menor", "reciente"],
         )
-        self.assertEqual(r["tables"]["pendientes"][0]["rango_antiguedad"], ">90 días")
+        self.assertEqual(r["tables"]["pendientes"][0]["rango_antiguedad"], ">90 dias")
 
     def test_cobertura_y_porcentaje_mayor_30_dias(self):
         pp = [

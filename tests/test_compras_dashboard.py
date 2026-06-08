@@ -39,7 +39,7 @@ class TestBuildComprasDashboard(unittest.TestCase):
         self.tables = self.result["tables"]
 
     def test_firma_sin_fcp(self):
-        """La función acepta solo fc sin parámetro fcp."""
+        """La funcion acepta solo fc sin parametro fcp."""
         r = build_compras_dashboard(FC_BASE)
         self.assertIn("kpis", r)
 
@@ -262,7 +262,7 @@ class TestAnticiposEnCompras(unittest.TestCase):
         periodos = {p["key"]: p for p in r["anticipos"]["temporal"]["periodos"]}
         self.assertAlmostEqual(periodos["2026-05"]["monto_pendiente"], 0.0, places=1)
         self.assertAlmostEqual(periodos["2026-05"]["monto_regularizado"], 4023.14, places=1)
-        # Junio está en el eje pero sin anticipos emitidos → todo cero.
+        # Junio esta en el eje pero sin anticipos emitidos → todo cero.
         self.assertAlmostEqual(periodos["2026-06"]["monto_pendiente"], 0.0, places=1)
         self.assertAlmostEqual(periodos["2026-06"]["monto_regularizado"], 0.0, places=1)
 

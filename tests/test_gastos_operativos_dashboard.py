@@ -134,7 +134,7 @@ class TestCategorizacion(unittest.TestCase):
         rows = [_gasto(**{"Gasto Operativo Categoria": ""})]
         result = build_gastos_operativos_dashboard(rows, **PERIODO)
         cats = {s["categoria"] for s in result["series"]["categoria"]}
-        self.assertIn("Sin categoría", cats)
+        self.assertIn("Sin categoria", cats)
 
 
 class TestAgrupacionPorTarjeta(unittest.TestCase):

@@ -424,7 +424,7 @@ class WebhookContractTests(unittest.TestCase):
         self.assertIn("id=\"comprasTipoBars\"", html)
         self.assertIn("id=\"comprasCfdiBars\"", html)
         self.assertIn("Compras documentadas", html)
-        self.assertIn("Concentración", html)
+        self.assertIn("Concentracion", html)
         self.assertIn("Periodo parcial", html)
         self.assertIn("kpis.iva_alerta", html)
         self.assertIn("management?.comparison", html)
