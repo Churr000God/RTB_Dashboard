@@ -21,9 +21,9 @@ from pydantic import BaseModel
 from rtb_analisis import (
     build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard,
     build_finanzas_dashboard, build_gastos_operativos_dashboard,
-    build_pagos_proveedores_dashboard, build_ventas_dashboard,
+    build_logistica_dashboard, build_pagos_proveedores_dashboard, build_ventas_dashboard,
     find_latest_csv, find_latest_facturacion_csv, find_latest_gastos_operativos_csv,
-    find_latest_pagos_proveedores_csvs, load_cotizaciones, read_csv,
+    find_latest_logistica_csvs, find_latest_pagos_proveedores_csvs, load_cotizaciones, read_csv,
 )
 
 
@@ -39,6 +39,7 @@ COMPRAS_SNAPSHOT_FILENAME = "compras_latest.json"
 COBRANZA_SNAPSHOT_FILENAME = "cobranza_latest.json"
 PAGOS_PROVEEDORES_SNAPSHOT_FILENAME = "pagos_proveedores_latest.json"
 GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
+LOGISTICA_SNAPSHOT_FILENAME         = "logistica_latest.json"
 FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "600"))
@@ -573,6 +574,50 @@ def load_gastos_operativos_payload(data_dir: str = "data", dashboard_dir: str = 
     return build_gastos_operativos_dashboard(read_csv(g_path))
 
 
+def publish_logistica_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    ap_path, en_path, et_path, seg_path = find_latest_logistica_csvs(data_dir)
+    seg_rows = read_csv(seg_path) if seg_path else []
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    logistica = build_logistica_dashboard(
+        read_csv(ap_path),
+        read_csv(en_path),
+        read_csv(et_path),
+        seg_rows,
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    files = {
+        "aprobados":  ap_path.name,
+        "enviados":   en_path.name,
+        "entregados": et_path.name,
+    }
+    if seg_path:
+        files["seguimiento"] = seg_path.name
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": files,
+        "dashboard": {"logistica": logistica},
+    }
+    atomic_write_json(Path(dashboard_dir) / LOGISTICA_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_logistica_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / LOGISTICA_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["logistica"]
+    ap_path, en_path, et_path, seg_path = find_latest_logistica_csvs(data_dir)
+    seg_rows = read_csv(seg_path) if seg_path else []
+    return build_logistica_dashboard(read_csv(ap_path), read_csv(en_path), read_csv(et_path), seg_rows)
+
+
 def publish_finanzas_snapshot(
     data_dir: str | Path,
     dashboard_dir: str | Path,
@@ -701,7 +746,7 @@ def render_index() -> str:
     .module-tab:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(208,181,107,.22); }
     .module-tab.active { border-color: var(--sidebar); background: var(--sidebar); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
     .canvas { min-height: calc(100vh - 104px); border: 1px dashed #c8d2dc; border-radius: 10px; background: var(--paper); padding: 16px; }
-    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden], .finanzas-panel[hidden] { display: none; }
+    .ventas-panel[hidden], .facturacion-panel[hidden], .compras-panel[hidden], .cobranza-panel[hidden], .pagos_proveedores-panel[hidden], .gastos_operativos-panel[hidden], .logistica-panel[hidden], .finanzas-panel[hidden] { display: none; }
     .compras-panel { display: grid; gap: 14px; }
     .compras-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .compras-risk-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -952,6 +997,7 @@ def render_index() -> str:
         <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
         <button class="module-tab" type="button" data-module="pagos_proveedores">Pagos Proveedores</button>
         <button class="module-tab" type="button" data-module="gastos_operativos">Gastos Operativos</button>
+        <button class="module-tab" type="button" data-module="logistica">Log&#237;stica</button>
         <button class="module-tab" type="button" data-module="inventario">Inventario</button>
         <button class="module-tab" type="button" data-module="finanzas">Finanzas</button>
         <button class="module-tab" type="button" data-module="pnl">P&amp;L</button>
@@ -1533,6 +1579,106 @@ def render_index() -> str:
 
         </section>
 
+        <section id="logisticaPanel" class="logistica-panel" aria-label="Log&#237;stica de pedidos" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="logisticaKpiGrid">
+            <p class="panel-state">Cargando log&#237;stica...</p>
+          </div>
+
+          <section class="status-section" id="logisticaTemporalSection" hidden>
+            <h2 class="section-title" id="logisticaTemporalTitle">Entregas por periodo</h2>
+            <p class="section-subtitle" id="logisticaTemporalSubtitle"></p>
+            <div class="weekly-chart-wrap" style="height:320px;width:100%">
+              <canvas class="weekly-chart" id="logisticaTemporalChart" width="760" height="320" aria-label="Entregas por periodo (Local vs For&#225;neo)" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="logisticaTemporalTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="logisticaTiemposSection" hidden>
+            <h2 class="section-title">Tiempos de ciclo</h2>
+            <p class="section-subtitle">Lead time entre aprobaci&#243;n, env&#237;o y entrega (solo pedidos entregados con fechas completas).</p>
+            <div id="logisticaTiemposCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+              <div>
+                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Fases del ciclo (mediana vs promedio, d&#237;as)</p>
+                <div class="weekly-chart-wrap" style="height:240px">
+                  <canvas class="weekly-chart" id="logisticaLeadChart" width="480" height="240" aria-label="Lead times por fase" style="width:100%;height:100%;display:block"></canvas>
+                  <div class="chart-tooltip" id="logisticaLeadTooltip" hidden></div>
+                </div>
+              </div>
+              <div>
+                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Distribuci&#243;n del ciclo total</p>
+                <canvas id="logisticaLeadHistChart" style="width:100%;display:block" aria-label="Histograma ciclo total"></canvas>
+                <div class="chart-tooltip" id="logisticaLeadHistTooltip" hidden></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="logisticaTipoEnvioSection" hidden>
+            <h2 class="section-title">Local vs For&#225;neo</h2>
+            <p class="section-subtitle">Comparativa de vol&#250;men, monto y tiempos entre tipo de env&#237;o.</p>
+            <div id="logisticaTipoCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
+            <canvas id="logisticaTipoChart" style="width:100%;display:block" aria-label="Monto por tipo de env&#237;o"></canvas>
+            <div class="chart-tooltip" id="logisticaTipoTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="logisticaEstadoSection" hidden>
+            <h2 class="section-title">Estado de pedidos aprobados</h2>
+            <p class="section-subtitle">Distribuci&#243;n de todos los pedidos aprobados en el periodo por estado actual.</p>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead>
+                    <tr><th>Estado</th><th>Pedidos</th><th>% qty</th></tr>
+                  </thead>
+                  <tbody id="logisticaEstadoRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="logisticaEstadoPie" width="520" height="520" aria-label="Estados de pedidos aprobados"></canvas>
+                  <div class="pie-center" id="logisticaEstadoPieCenter"><strong>100%</strong><span>Pedidos</span></div>
+                </div>
+                <div class="chart-tooltip" id="logisticaEstadoTooltip" hidden></div>
+                <canvas id="logisticaEstadoLegend" style="display:block;margin-top:8px"></canvas>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="logisticaTopClientesSection" hidden>
+            <h2 class="section-title">Top 10 clientes por monto entregado</h2>
+            <p class="section-subtitle">Mayores vol&#250;menes de pedidos entregados en el periodo.</p>
+            <canvas id="logisticaTopClientesChart" style="width:100%;display:block" aria-label="Top clientes por monto entregado"></canvas>
+            <div class="chart-tooltip" id="logisticaTopClientesTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="logisticaIncompletosSection" hidden>
+            <h2 class="section-title">Pedidos incompletos pendientes</h2>
+            <p class="section-subtitle">Pedidos entregados con faltante sin resolver (fuente: seguimiento de incompletos).</p>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr><th>Pedido</th><th>Cliente</th><th>Motivo</th><th>Productos faltantes</th><th style="min-width:90px">Estado</th><th>Creado</th></tr>
+                </thead>
+                <tbody id="logisticaIncompletosRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="status-section" id="logisticaLentosSection" hidden>
+            <h2 class="section-title">Pedidos con ciclo largo</h2>
+            <p class="section-subtitle" id="logisticaLentosSubtitle">Pedidos cuyo ciclo aprobaci&#243;n&#8594;entrega supera el doble de la mediana.</p>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr><th>Pedido</th><th>Cliente</th><th>Tipo</th><th>Monto</th><th>Ciclo (d&#237;as)</th><th>Entregado</th></tr>
+                </thead>
+                <tbody id="logisticaLentosRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+        </section>
+
         <section id="finanzasPanel" class="finanzas-panel" aria-label="Finanzas consolidadas" hidden>
           <div class="kpi-grid cobranza-kpi-grid" id="finanzasKpiGrid">
             <p class="panel-state">Cargando finanzas...</p>
@@ -1676,11 +1822,13 @@ def render_index() -> str:
     const cobranzaPanel = document.querySelector('#cobranzaPanel');
     const pagosProveedoresPanel = document.querySelector('#pagos_proveedoresPanel');
     const gastosOperativosPanel = document.querySelector('#gastos_operativosPanel');
+    const logisticaPanel = document.querySelector('#logisticaPanel');
     const finanzasPanel = document.querySelector('#finanzasPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
     const cobranzaHealthStrip = document.querySelector('#cobranzaHealthStrip');
     const pagosProveedoresKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
     const gastosOperativosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
+    const logisticaKpiGrid = document.querySelector('#logisticaKpiGrid');
     const finanzasKpiGrid = document.querySelector('#finanzasKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
@@ -1761,6 +1909,7 @@ def render_index() -> str:
     let cobranzaLoaded = false;
     let pagosProveedoresLoaded = false;
     let gastosOperativosLoaded = false;
+    let logisticaLoaded = false;
     let estadoChart = { slices: [], activeIndex: null };
     let facturacionEstadoChart = { slices: [], activeIndex: null };
     let facturacionTemporalState = { rows: [], activeIndex: null, points: [], tendencias: null, vista: 'monto' };
@@ -3737,7 +3886,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, finanzasKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, logisticaKpiGrid, finanzasKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -5889,6 +6038,263 @@ def render_index() -> str:
       }
     }
 
+    // ── MÓDULO LOGÍSTICA ───────────────────────────────────────────────────────
+    const LOG_LOCAL_COLOR   = '#276f86';
+    const LOG_FORANEO_COLOR = '#d0b56b';
+    const LOG_LENTO_COLOR   = '#d96058';
+    const LOG_ESTADO_COLORS = { 'Entregado': '#57c5b6', 'Enviado': '#276f86', 'Preparado': '#d0b56b', 'En espera': '#d96058' };
+
+    let logisticaTemporalState = {};
+    let logisticaLeadState = {};
+    let logisticaEstadoChart = { slices: [], activeIndex: null };
+
+    function renderLogisticaEstado(seriesEstado) {
+      const section = document.querySelector('#logisticaEstadoSection');
+      if (!seriesEstado || !seriesEstado.length) { if (section) section.hidden = true; return; }
+      if (section) section.hidden = false;
+      const totalN = seriesEstado.reduce((s, r) => s + (r.n || 0), 0);
+      const tbody = document.querySelector('#logisticaEstadoRows');
+      const pieCanvas = document.querySelector('#logisticaEstadoPie');
+      const pieCenter = document.querySelector('#logisticaEstadoPieCenter');
+      const legendCanvas = document.querySelector('#logisticaEstadoLegend');
+      const tooltip = document.querySelector('#logisticaEstadoTooltip');
+      const FALLBACK_COLORS = ['#57c5b6','#276f86','#d0b56b','#d96058','#8a6f35','#5b6673'];
+      const colors = seriesEstado.map((r, i) => LOG_ESTADO_COLORS[r.estado] || FALLBACK_COLORS[i % FALLBACK_COLORS.length]);
+
+      // Construir slices (dona)
+      let angle = -Math.PI / 2;
+      logisticaEstadoChart.slices = seriesEstado.map((r, i) => {
+        const pct = totalN ? r.n / totalN : 0;
+        const sweep = pct * Math.PI * 2;
+        const s = { estado: r.estado, n: r.n, pct, color: colors[i], start: angle, end: angle + sweep };
+        angle += sweep;
+        return s;
+      });
+      logisticaEstadoChart.activeIndex = null;
+
+      function drawPie(activeIndex) {
+        if (!pieCanvas) return;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const rect = pieCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        pieCanvas.width  = Math.max(1, Math.round(rect.width  * dpr));
+        pieCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+        const ctx = pieCanvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        const cx = rect.width / 2, cy = rect.height / 2;
+        const radius = Math.min(rect.width, rect.height) * 0.43;
+        const inner  = radius * 0.58;
+        logisticaEstadoChart.slices.forEach((sl, idx) => {
+          const active = idx === activeIndex;
+          ctx.beginPath(); ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, radius + (active ? 8 : 0), sl.start, sl.end);
+          ctx.closePath();
+          ctx.fillStyle = sl.color;
+          ctx.globalAlpha = activeIndex == null || active ? 1 : 0.42;
+          ctx.fill(); ctx.globalAlpha = 1;
+          ctx.lineWidth = active ? 4 : 2; ctx.strokeStyle = '#fbfcfd'; ctx.stroke();
+        });
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbfcfd'; ctx.fill();
+        ctx.strokeStyle = '#e0e8ee'; ctx.lineWidth = 1; ctx.stroke();
+      }
+      drawPie(null);
+      if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
+      drawPieLegendCanvas(legendCanvas, seriesEstado.map(r => r.estado), colors);
+
+      // Tabla
+      if (tbody) tbody.innerHTML = seriesEstado.map(r =>
+        `<tr><td>${escapeHtml(r.estado)}</td><td>${formatNumber(r.n)}</td><td>${totalN ? (r.n/totalN*100).toFixed(0)+'%' : '—'}</td></tr>`
+      ).join('');
+
+      // Interactividad dona
+      if (pieCanvas) {
+        pieCanvas.addEventListener('mousemove', (event) => {
+          const rect2 = pieCanvas.getBoundingClientRect();
+          const x = event.clientX - rect2.left - rect2.width/2;
+          const y = event.clientY - rect2.top  - rect2.height/2;
+          const dist = Math.hypot(x, y);
+          const outer = Math.min(rect2.width, rect2.height) * 0.47;
+          const inn   = outer * 0.52;
+          if (dist < inn || dist > outer) {
+            logisticaEstadoChart.activeIndex = null; drawPie(null);
+            if (tooltip) tooltip.hidden = true;
+            if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
+            return;
+          }
+          let a = Math.atan2(y, x); if (a < -Math.PI/2) a += Math.PI*2;
+          const idx = logisticaEstadoChart.slices.findIndex(sl => a >= sl.start && a <= sl.end);
+          if (idx >= 0) {
+            logisticaEstadoChart.activeIndex = idx; drawPie(idx);
+            const sl = logisticaEstadoChart.slices[idx];
+            if (pieCenter) pieCenter.innerHTML = `<strong>${(sl.pct*100).toFixed(0)}%</strong><span>${escapeHtml(sl.estado)}</span>`;
+            if (tooltip) {
+              tooltip.innerHTML = `<b>${escapeHtml(sl.estado)}</b><div><span>Pedidos</span><strong>${formatNumber(sl.n)}</strong></div><div><span>%</span><strong>${(sl.pct*100).toFixed(0)}%</strong></div>`;
+              tooltip.hidden = false; placeTooltipNear(tooltip, event.clientX, event.clientY);
+            }
+          }
+        });
+        pieCanvas.addEventListener('mouseleave', () => {
+          logisticaEstadoChart.activeIndex = null; drawPie(null);
+          if (tooltip) tooltip.hidden = true;
+          if (pieCenter) pieCenter.innerHTML = '<strong>100%</strong><span>Pedidos</span>';
+        });
+        if (typeof ResizeObserver !== 'undefined') {
+          new ResizeObserver(() => drawPie(logisticaEstadoChart.activeIndex)).observe(pieCanvas);
+        }
+      }
+    }
+
+    function renderLogistica(body) {
+      const kpis = body.kpis || {};
+      const faltPct = kpis.pct_faltante ? (kpis.pct_faltante * 100).toFixed(0) + '%' : '0%';
+      const cards = [];
+      cards.push(`<article class="kpi-card primary"><h2>Embudo del periodo</h2><div class="kpi-pair">${metric('Aprobados', formatNumber(kpis.n_aprobados), 'En el periodo')}${metric('Enviados', formatNumber(kpis.n_enviados), 'Enviados')}</div>${metric('Entregados', formatNumber(kpis.n_entregados), 'Ciclo completo')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Monto entregado</h2><div class="kpi-pair">${metric('Total', formatMoney(kpis.monto_entregado), 'Valor pedidos entregados')}${metric('% empacado prom.', kpis.pct_empacado_prom + '%', 'Pedidos entregados')}</div></article>`);
+      const leadStyle = kpis.ciclo_total_med > 10 ? 'warning' : 'accent';
+      cards.push(`<article class="kpi-card ${leadStyle}"><h2>Ciclo de entrega</h2><div class="kpi-pair">${metric('Ciclo total (med.)', kpis.ciclo_total_med + ' d', 'Aprobaci&#243;n&#8594;entrega')}${metric('Aprobaci&#243;n&#8594;env&#237;o (med.)', kpis.lead_aprob_envio_med + ' d', 'Preparaci&#243;n')}</div>${metric('Env&#237;o&#8594;entrega (med.)', kpis.lead_envio_entrega_med + ' d', 'Tr&#225;nsito')}</article>`);
+      const faltStyle = kpis.n_incompletos_pendientes > 0 ? 'warning' : 'accent';
+      cards.push(`<article class="kpi-card ${faltStyle}"><h2>Calidad de entrega</h2><div class="kpi-pair">${metric('Con faltante (' + faltPct + ')', formatNumber(kpis.n_con_faltante), 'De ' + kpis.n_entregados + ' entregados')}${metric('Incompletos pendientes', formatNumber(kpis.n_incompletos_pendientes), 'Sin resolver')}</div></article>`);
+      if (logisticaKpiGrid) logisticaKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
+
+      // ── Temporal (Local vs For&#225;neo por periodo) ──────────────────────────────
+      const temporal = body.series?.temporal;
+      const tempSection = document.querySelector('#logisticaTemporalSection');
+      if (temporal && temporal.periodos && temporal.periodos.length) {
+        if (tempSection) tempSection.hidden = false;
+        const subEl = document.querySelector('#logisticaTemporalSubtitle');
+        if (subEl) subEl.textContent = temporal.chart_suffix ? 'Monto entregado ' + temporal.chart_suffix : '';
+        const titleEl = document.querySelector('#logisticaTemporalTitle');
+        if (titleEl) titleEl.textContent = temporal.behavior_title || 'Entregas por periodo';
+        drawGroupedBarChart(
+          document.querySelector('#logisticaTemporalChart'),
+          document.querySelector('#logisticaTemporalTooltip'),
+          temporal.periodos,
+          { seriesA: { key: 'monto_local',   label: 'Local',    color: LOG_LOCAL_COLOR   },
+            seriesB: { key: 'monto_foraneo',  label: 'For&#225;neo', color: LOG_FORANEO_COLOR },
+            labelKey: 'etiqueta', valueFmt: formatMoney, state: logisticaTemporalState }
+        );
+      } else { if (tempSection) tempSection.hidden = true; }
+
+      // ── Tiempos de ciclo ────────────────────────────────────────────────────
+      const tiemposSection = document.querySelector('#logisticaTiemposSection');
+      if (kpis.n_con_lead > 0) {
+        if (tiemposSection) tiemposSection.hidden = false;
+        const tiemposCards = document.querySelector('#logisticaTiemposCards');
+        if (tiemposCards) tiemposCards.innerHTML = [
+          { label: 'Ciclo total', prom: kpis.ciclo_total_prom, med: kpis.ciclo_total_med },
+          { label: 'Aprobaci&#243;n&#8594;Env&#237;o', prom: kpis.lead_aprob_envio_prom, med: kpis.lead_aprob_envio_med },
+          { label: 'Env&#237;o&#8594;Entrega', prom: kpis.lead_envio_entrega_prom, med: kpis.lead_envio_entrega_med },
+        ].map(t => `<div class="tiempos-kpi"><span>${t.label}</span><strong>${t.med} d</strong><small>prom ${t.prom} d</small></div>`).join('');
+        // Barras agrupadas: fases
+        const leadData = [
+          { fase: 'Aprob.&#8594;Env&#237;o', med: kpis.lead_aprob_envio_med,    prom: kpis.lead_aprob_envio_prom  },
+          { fase: 'Env&#237;o&#8594;Entrega', med: kpis.lead_envio_entrega_med, prom: kpis.lead_envio_entrega_prom },
+          { fase: 'Ciclo Total',          med: kpis.ciclo_total_med,         prom: kpis.ciclo_total_prom        },
+        ];
+        drawGroupedBarChart(
+          document.querySelector('#logisticaLeadChart'),
+          document.querySelector('#logisticaLeadTooltip'),
+          leadData,
+          { seriesA: { key: 'med',  label: 'Mediana (d)',  color: LOG_LOCAL_COLOR   },
+            seriesB: { key: 'prom', label: 'Promedio (d)', color: LOG_FORANEO_COLOR },
+            labelKey: 'fase', valueFmt: (v) => v.toFixed(1) + ' d', state: logisticaLeadState }
+        );
+        // Histograma ciclo total
+        const hist = body.series?.lead_hist || [];
+        if (hist.length) {
+          renderHBarCanvas(
+            document.querySelector('#logisticaLeadHistChart'),
+            document.querySelector('#logisticaLeadHistTooltip'),
+            hist,
+            { barField: 'n', labelField: 'rango', color: LOG_LOCAL_COLOR,
+              tooltipFn: (d) => `<strong>${escapeHtml(d.rango)}</strong><br>${d.n} pedido(s)` }
+          );
+        }
+      } else { if (tiemposSection) tiemposSection.hidden = true; }
+
+      // ── Local vs For&#225;neo ─────────────────────────────────────────────────────
+      const tipoSection = document.querySelector('#logisticaTipoEnvioSection');
+      const seriesTipo = body.series?.tipo_envio || [];
+      if (seriesTipo.length) {
+        if (tipoSection) tipoSection.hidden = false;
+        const tipoCards = document.querySelector('#logisticaTipoCards');
+        if (tipoCards) tipoCards.innerHTML = seriesTipo.map(t =>
+          `<div class="tiempos-kpi"><span>${escapeHtml(t.tipo)}</span><strong>${formatMoney(t.m)}</strong><small>${t.n} pedidos&nbsp;·&nbsp;ciclo ${t.ciclo_med !== null ? t.ciclo_med + ' d med.' : '—'}</small></div>`
+        ).join('');
+        renderHBarCanvas(
+          document.querySelector('#logisticaTipoChart'),
+          document.querySelector('#logisticaTipoTooltip'),
+          seriesTipo,
+          { barField: 'm', labelField: 'tipo', color: LOG_LOCAL_COLOR,
+            tooltipFn: (d) => `<strong>${escapeHtml(d.tipo)}</strong><br>${formatMoney(d.m)}<br>${d.n} pedido(s)<br>Ciclo med: ${d.ciclo_med !== null ? d.ciclo_med + ' d' : '—'}` }
+        );
+      } else { if (tipoSection) tipoSection.hidden = true; }
+
+      // ── Estado dona ─────────────────────────────────────────────────────────
+      renderLogisticaEstado(body.series?.estado || []);
+
+      // ── Top clientes ────────────────────────────────────────────────────────
+      const topCliSection = document.querySelector('#logisticaTopClientesSection');
+      if (body.tables?.top_clientes?.length) {
+        if (topCliSection) topCliSection.hidden = false;
+        renderHBarCanvas(
+          document.querySelector('#logisticaTopClientesChart'),
+          document.querySelector('#logisticaTopClientesTooltip'),
+          body.tables.top_clientes,
+          { barField: 'm', labelField: 'cliente', color: LOG_LOCAL_COLOR,
+            tooltipFn: (d) => `<strong>${escapeHtml(d.cliente || '—')}</strong><br>${formatMoney(d.m)}<br>${d.n} pedido(s)` }
+        );
+      } else { if (topCliSection) topCliSection.hidden = true; }
+
+      // ── Incompletos pendientes ───────────────────────────────────────────────
+      const incSection = document.querySelector('#logisticaIncompletosSection');
+      const incompletos = body.tables?.incompletos || [];
+      const pendientes = incompletos.filter(r => (r.estado || '').toLowerCase() !== 'completado');
+      if (pendientes.length) {
+        if (incSection) incSection.hidden = false;
+        const tbody2 = document.querySelector('#logisticaIncompletosRows');
+        if (tbody2) tbody2.innerHTML = incompletos.map(r => {
+          const badge = (r.estado || '').toLowerCase() === 'completado'
+            ? '<span style="background:#57c5b6;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px">Completado</span>'
+            : '<span style="background:#d96058;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px">Pendiente</span>';
+          return `<tr><td>${escapeHtml(r.nombre || '—')}</td><td>${escapeHtml(r.cliente || '—')}</td><td>${escapeHtml(r.motivo || '—')}</td><td>${escapeHtml(r.productos_faltantes || '—')}</td><td>${badge}</td><td>${escapeHtml(r.fecha_creacion || '—')}</td></tr>`;
+        }).join('');
+      } else { if (incSection) incSection.hidden = true; }
+
+      // ── Pedidos lentos ──────────────────────────────────────────────────────
+      const lentosSection = document.querySelector('#logisticaLentosSection');
+      const lentos = body.tables?.pedidos_lentos || [];
+      if (lentos.length) {
+        if (lentosSection) lentosSection.hidden = false;
+        const subLent = document.querySelector('#logisticaLentosSubtitle');
+        if (subLent && kpis.ciclo_total_med > 0) subLent.textContent = `Pedidos con ciclo > ${(kpis.ciclo_total_med * 2).toFixed(0)} d&#237;as (2&#215; la mediana de ${kpis.ciclo_total_med} d).`;
+        const tbody3 = document.querySelector('#logisticaLentosRows');
+        if (tbody3) tbody3.innerHTML = lentos.map(r =>
+          `<tr><td>${escapeHtml(r.nombre || '—')}</td><td>${escapeHtml(r.cliente || '—')}</td><td>${escapeHtml(r.tipo_envio || '—')}</td><td>${formatMoney(r.total)}</td><td style="font-weight:700;color:#d96058">${r.ciclo_dias} d</td><td>${escapeHtml(r.fecha_entrega || '—')}</td></tr>`
+        ).join('');
+      } else { if (lentosSection) lentosSection.hidden = true; }
+    }
+
+    async function loadLogistica() {
+      if (logisticaLoaded) return;
+      const kpiGrid2 = document.querySelector('#logisticaKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/logistica');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de log&#237;stica.');
+        renderLogistica(body);
+        logisticaLoaded = true;
+      } catch (error) {
+        if (kpiGrid2) kpiGrid2.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     // ── MÓDULO FINANZAS ────────────────────────────────────────────────────────
     const FINANZAS_INGRESO_COLOR = '#57c5b6';   // teal claro — ingresos
     const FINANZAS_EGRESO_COLOR  = '#d96058';   // rojo alerta — egresos
@@ -6050,6 +6456,7 @@ def render_index() -> str:
       cobranzaPanel.hidden = moduleName !== 'cobranza';
       pagosProveedoresPanel.hidden = moduleName !== 'pagos_proveedores';
       gastosOperativosPanel.hidden = moduleName !== 'gastos_operativos';
+      if (logisticaPanel) logisticaPanel.hidden = moduleName !== 'logistica';
       if (finanzasPanel) finanzasPanel.hidden = moduleName !== 'finanzas';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
@@ -6057,6 +6464,7 @@ def render_index() -> str:
       if (moduleName === 'cobranza') loadCobranza();
       if (moduleName === 'pagos_proveedores') loadPagosProveedores();
       if (moduleName === 'gastos_operativos') loadGastosOperativos();
+      if (moduleName === 'logistica') loadLogistica();
       if (moduleName === 'finanzas') loadFinanzas();
     }
 
@@ -6223,6 +6631,15 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/logistica")
+    def dashboard_logistica(request: Request) -> dict:
+        try:
+            return load_logistica_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/dashboard/finanzas")
     def dashboard_finanzas(request: Request) -> dict:
         try:
@@ -6292,6 +6709,15 @@ def create_app(
                 pass
             try:
                 publish_gastos_operativos_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_logistica_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     payload.fecha_desde,
@@ -6380,6 +6806,15 @@ def create_app(
                 pass
             try:
                 publish_gastos_operativos_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_logistica_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     fecha_desde,

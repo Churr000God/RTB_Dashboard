@@ -93,6 +93,16 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/pagos_proveedores_latest.json`
 - Endpoint: `GET /api/dashboard/pagos_proveedores`
 
+### Logística (pedidos aprobados / enviados / entregados — 8º tab)
+- `Pedidos_Aprbados_En_El_Periodo_YYYY-MM-DD_HH-MM.csv` *(typo "Aprbados")* — aprobados. Regex: `^Pedidos_Aprbados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Pedidos_Enviados_En_El_Periodo_YYYY-MM-DD_HH-MM.csv` — enviados. Regex: `^Pedidos_Enviados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Pedidos_Entregados_En_El_Periodo_YYYY-MM-DD_HH-MM.csv` — entregados, **fuente principal de lead times**. Regex: `^Pedidos_Entregados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Segimiento_pedidos_entregados_incompletos_YYYY-MM-DD_HH-MM.csv` *(typo "Segimiento")* — backlog incompletos (opcional). Regex: `^Segimiento_pedidos_entregados_incompletos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- Selección: `find_latest_logistica_csvs(data_dir)` en `rtb_analisis.py` — devuelve `(ap, en, et, seg|None)` con fallback a `data_procesada/`
+- Función: `build_logistica_dashboard(aprobados, enviados, entregados, seguimiento, period_label, fecha_desde, fecha_hasta)`
+- Snapshot: `dashboard_data/logistica_latest.json`
+- Endpoint: `GET /api/dashboard/logistica`
+
 ### Gastos Operativos (gastos administrativos categorizados)
 - `Gastos_Operativos_YYYY-MM-DD_HH-MM.csv` — gastos con categoría, tarjeta, deducible/no deducible. Regex: `^Gastos_Operativos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
 - Selección: `find_latest_gastos_operativos_csv(data_dir)` en `rtb_analisis.py`
@@ -100,7 +110,7 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/gastos_operativos_latest.json`
 - Endpoint: `GET /api/dashboard/gastos_operativos`
 
-### Finanzas (consolidado — 7º tab)
+### Finanzas (consolidado — 7º tab, independiente de Logística)
 - **No lee CSVs**: `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (consolidador puro).
 - **Dos lentes**:
   - Devengado: `facturacion.kpis.monto_facturado_vigente` vs `compras.kpis.tot_fc + gastos.kpis.total_total`
@@ -236,8 +246,9 @@ python -m unittest tests/test_cobranza_dashboard.py -v                 # 44 test
 python -m unittest tests/test_pagos_proveedores_dashboard.py -v        # 23 tests
 python -m unittest tests/test_gastos_operativos_dashboard.py -v        # 26 tests (+ 15 de regex/tarjeta/categoría)
 python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 tests
-# Suite completa sin FastAPI (188 tests):
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py -v
+python -m unittest tests/test_logistica_dashboard.py -v                # 44 tests
+# Suite completa sin FastAPI (247 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py -v
 ```
 
 Correr siempre antes de hacer commit en `rtb_analisis.py`.
@@ -274,6 +285,7 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-05 | Cobranza: nueva sección "Top 10 clientes con crédito activo" — barras horizontales (rojo), ordenadas por monto pendiente desc. Backend: `tables.top_clientes_pendientes` en `build_cobranza_dashboard`, agrupando `pendientes_cot` completo (no el top-20 truncado). 5 tests nuevos. |
 | 2026-06-05 | Nuevos módulos "Pagos a Proveedores" y "Gastos Operativos" (5º y 6º tabs). Backend: `build_pagos_proveedores_dashboard`, `build_gastos_operativos_dashboard`, `_find_csv_with_fallback` (genérico, compartido). Reglas clave: `cantidad_pagada` puede ser negativo (NC aplicada), `tipo_pago` viene con prefijo numérico, `Deducible` es string "TRUE"/"FALSE", campos de Gastos tienen espacios en el nombre. 49 tests nuevos (23 + 26). Suite completa: 130 tests. |
 | 2026-06-05 | Gastos Operativos: refactor visual completo — todas las tablas y leyendas migradas a `<canvas>`. 4 helpers canvas nuevos en `rtb_web.py`: `drawTableCanvas`, `drawGroupedBarChart`, `drawKpiCardsCanvas`, `drawPieLegendCanvas`. Centro de la dona dibujado en canvas (eliminado `div.pie-center`). Interactividad tabla↔gráfica bidireccional en Comportamiento semanal y Distribución por categoría. Análisis fiscal: tarjetas `.tiempos-kpi` HTML + gráfica de barras agrupadas canvas (Monto `#276f86` / IVA `#d0b56b`). Tabla de detalle eliminada. `GASTOS_CAT_COLORS` y colores de gráficas alineados a la paleta principal del tema. Bug resuelto: usar `renderVal` (no `valueOf`) en columnas de `drawTableCanvas` — `valueOf` es método nativo de Object.prototype y causa `[object Object]` en todas las celdas. |
+| 2026-06-08 | Nuevo módulo Logística (8º tab): 4 CSVs (aprobados/enviados/entregados/seguimiento_incompletos). Lead times calculados solo del CSV entregados vía `days_diff`. Las 3 vistas de n8n tienen ventanas de periodo independientes — NO son subconjuntos anidados; no usar ratio directo "entregados÷aprobados". `tiene_faltante` tiene typo "Aprbados" y "Segimiento" en prefijos. Campo `fecha_del_pedido` en seguimiento tiene clave malformada por n8n (prefijo duplicado sin separador) — se busca con `"fecha_del_pedido" in k`. No entra al consolidado Finanzas (montos ya están en ventas/cobranza). 44 tests nuevos. Suite total: 247 tests. |
 | 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
 
 ---

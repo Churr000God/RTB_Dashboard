@@ -1647,6 +1647,33 @@ def find_latest_gastos_operativos_csv(data_dir="data"):
     return p
 
 
+# ─── Módulo Logística ────────────────────────────────────────────────────────
+_RE_PED_APROBADOS   = re.compile(r"^Pedidos_Aprbados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_PED_ENVIADOS    = re.compile(r"^Pedidos_Enviados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_PED_ENTREGADOS  = re.compile(r"^Pedidos_Entregados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_SEG_INCOMPLETOS = re.compile(r"^Segimiento_pedidos_entregados_incompletos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+
+def find_latest_logistica_csvs(data_dir="data"):
+    """Devuelve (ap, en, et, seg) — ap/en/et obligatorios, seg puede ser None."""
+    p_ap  = _find_csv_with_fallback(data_dir, _RE_PED_APROBADOS,   "Pedidos_Aprbados_En_El_Periodo_")
+    p_en  = _find_csv_with_fallback(data_dir, _RE_PED_ENVIADOS,    "Pedidos_Enviados_En_El_Periodo_")
+    p_et  = _find_csv_with_fallback(data_dir, _RE_PED_ENTREGADOS,  "Pedidos_Entregados_En_El_Periodo_")
+    p_seg = _find_csv_with_fallback(data_dir, _RE_SEG_INCOMPLETOS, "Segimiento_pedidos_entregados_incompletos_")
+    if p_et is None:
+        raise FileNotFoundError(
+            f"No se encontró Pedidos_Entregados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+        )
+    if p_ap is None:
+        raise FileNotFoundError(
+            f"No se encontró Pedidos_Aprbados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+        )
+    if p_en is None:
+        raise FileNotFoundError(
+            f"No se encontró Pedidos_Enviados_En_El_Periodo_*.csv en {data_dir} ni en data_procesada/"
+        )
+    return p_ap, p_en, p_et, p_seg  # p_seg puede ser None si no existe todavía
+
+
 # Normalización del tipo de pago de Pagos_Facturas_Compras
 _TP_MAP = {
     "1": "Efectivo",
@@ -2054,6 +2081,313 @@ def build_gastos_operativos_dashboard(rows, period_label="Periodo actual", fecha
                 {"tipo": "Deducible", "n": len(deducibles), "m": monto_deducible, "iva": iva_acreditable},
                 {"tipo": "No deducible", "n": len(no_deducibles), "m": monto_no_deducible, "iva": iva_no_acreditable},
             ],
+        },
+        "signals": signals,
+    }
+
+
+def build_logistica_dashboard(
+    aprobados, enviados, entregados, seguimiento,
+    period_label="Periodo actual", fecha_desde=None, fecha_hasta=None,
+):
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d   = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    # Derivar prefijo del primer row de cada lista (columna que termina en _id)
+    def _prefix_of(rows):
+        if not rows: return ""
+        id_keys = [k for k in rows[0].keys() if k.endswith("_id")]
+        return id_keys[0][:-3] if id_keys else ""  # quita "_id"
+
+    def _norm_pedido(r, pre):
+        emp_raw = (r.get(pre + "_potcentaje_pedido_empacado") or "").replace("%", "").strip()
+        try:
+            emp = int(float(emp_raw))
+        except (ValueError, TypeError):
+            emp = 0
+        return {
+            "id":            (r.get(pre + "_id") or "").strip(),
+            "nombre":        (r.get(pre + "_nombre") or "").strip(),
+            "total":         round(f(r.get(pre + "_total")), 2),
+            "empacado":      emp,
+            "factura":       (r.get(pre + "_#_factura") or "").strip(),
+            "fecha_envio":   parse_date(r.get(pre + "_fecha_envio")),
+            "tipo_envio":    (r.get(pre + "_tipo_envio") or "").strip() or "Sin tipo",
+            "estado":        (r.get(pre + "_estado_pedido") or "").strip(),
+            "faltante":      str(r.get(pre + "_tiene_faltante") or "").strip().lower() == "true",
+            "cliente":       (r.get(pre + "_cliente") or "").strip() or "(sin cliente)",
+            "fecha_entrega": parse_date(r.get(pre + "_fecha_entrega")),
+            "fecha_aprob":   parse_date(r.get(pre + "_fecha_de_aprobacion.start")),
+        }
+
+    def _norm_seg(r):
+        pre = "Segimiento_pedidos_entregados_incompletos"
+        # fecha_del_pedido tiene clave malformada en n8n (prefijo duplicado sin separador)
+        fecha_pedido = None
+        for k in r:
+            if "fecha_del_pedido" in k:
+                fecha_pedido = parse_date(r[k])
+                break
+        return {
+            "id":                  (r.get(pre + "_id") or "").strip(),
+            "nombre":              (r.get(pre + "_name") or "").strip(),
+            "cliente":             (r.get(pre + "_cliente") or "").strip() or "(sin cliente)",
+            "estado":              (r.get(pre + "_estado") or "").strip(),
+            "motivo":              (r.get(pre + "_motivo_de_incompletitud") or "").strip(),
+            "prioridad":           (r.get(pre + "_prioridad") or "").strip() or "Sin prioridad",
+            "productos_faltantes": (r.get(pre + "_productos_faltantes.0") or "").strip(),
+            "fecha_creacion":      parse_date(r.get(pre + "_fecha_de_creaci_n")),
+            "fecha_est_res":       parse_date(r.get(pre + "_fecha_estimada_de_resoluci_n")),
+            "notas":               (r.get(pre + "_notas_adicionales") or "").strip(),
+        }
+
+    # ── Normalizar ────────────────────────────────────────────────────────────
+    pre_ap = _prefix_of(aprobados)
+    pre_en = _prefix_of(enviados)
+    pre_et = _prefix_of(entregados)
+
+    ap_norm  = [_norm_pedido(r, pre_ap) for r in (aprobados   or [])]
+    en_norm  = [_norm_pedido(r, pre_en) for r in (enviados    or [])]
+    et_norm  = [_norm_pedido(r, pre_et) for r in (entregados  or [])]
+    seg_norm = [_norm_seg(r)            for r in (seguimiento or [])]
+
+    # ── Filtrar por periodo (fecha natural de cada CSV) ───────────────────────
+    ap_periodo = [r for r in ap_norm if in_period(r["fecha_aprob"])]
+    en_periodo = [r for r in en_norm if in_period(r["fecha_envio"])]
+    et_periodo = [r for r in et_norm if in_period(r["fecha_entrega"])]
+
+    # ── KPIs básicos ──────────────────────────────────────────────────────────
+    n_aprobados  = len(ap_periodo)
+    n_enviados   = len(en_periodo)
+    n_entregados = len(et_periodo)
+    monto_entregado = round(sum(r["total"] for r in et_periodo), 2)
+
+    n_con_faltante    = sum(1 for r in et_periodo if r["faltante"])
+    pct_faltante      = round(n_con_faltante / n_entregados, 4) if n_entregados else 0.0
+    pct_empacado_prom = round(sum(r["empacado"] for r in et_periodo) / n_entregados, 1) if n_entregados else 0.0
+    n_sin_fecha       = sum(1 for r in et_periodo if not r["fecha_envio"] or not r["fecha_entrega"])
+
+    # ── Lead times (solo entregados, requieren ambas fechas) ──────────────────
+    leads_ap_en = []
+    leads_en_et = []
+    leads_ciclo = []
+
+    for r in et_periodo:
+        if r["fecha_aprob"] and r["fecha_envio"]:
+            d = days_diff(r["fecha_aprob"], r["fecha_envio"])
+            if d is not None:
+                leads_ap_en.append(d)
+        if r["fecha_envio"] and r["fecha_entrega"]:
+            d = days_diff(r["fecha_envio"], r["fecha_entrega"])
+            if d is not None:
+                leads_en_et.append(d)
+        if r["fecha_aprob"] and r["fecha_entrega"]:
+            d = days_diff(r["fecha_aprob"], r["fecha_entrega"])
+            if d is not None:
+                leads_ciclo.append(d)
+
+    n_con_lead       = len(leads_ciclo)
+    ciclo_prom       = round(avg(leads_ciclo), 1)  if leads_ciclo else 0.0
+    ciclo_med        = round(med(leads_ciclo), 1)  if leads_ciclo else 0.0
+    lead_ap_en_prom  = round(avg(leads_ap_en), 1)  if leads_ap_en  else 0.0
+    lead_ap_en_med   = round(med(leads_ap_en), 1)  if leads_ap_en  else 0.0
+    lead_en_et_prom  = round(avg(leads_en_et), 1)  if leads_en_et  else 0.0
+    lead_en_et_med   = round(med(leads_en_et), 1)  if leads_en_et  else 0.0
+
+    # ── Seguimiento de incompletos ────────────────────────────────────────────
+    pendientes  = [r for r in seg_norm if (r["estado"] or "").lower() != "completado"]
+    completados = [r for r in seg_norm if (r["estado"] or "").lower() == "completado"]
+    n_pend = len(pendientes)
+
+    # ── series.estado (distribución de estado_pedido en aprobados) ────────────
+    estado_data = defaultdict(int)
+    for r in ap_norm:
+        estado_data[r["estado"] or "Sin estado"] += 1
+    series_estado = [
+        {"estado": k, "n": v}
+        for k, v in sorted(estado_data.items(), key=lambda x: -x[1])
+    ]
+
+    # ── series.tipo_envio (Local vs Foráneo en entregados) ───────────────────
+    tipo_data = defaultdict(lambda: {"n": 0, "m": 0.0, "ciclos": []})
+    for r in et_periodo:
+        t = r["tipo_envio"]
+        tipo_data[t]["n"] += 1
+        tipo_data[t]["m"] += r["total"]
+        if r["fecha_aprob"] and r["fecha_entrega"]:
+            d = days_diff(r["fecha_aprob"], r["fecha_entrega"])
+            if d is not None:
+                tipo_data[t]["ciclos"].append(d)
+    series_tipo_envio = [
+        {
+            "tipo":       k,
+            "n":          v["n"],
+            "m":          round(v["m"], 2),
+            "ciclo_med":  round(med(v["ciclos"]), 1) if v["ciclos"] else None,
+            "ciclo_prom": round(avg(v["ciclos"]), 1) if v["ciclos"] else None,
+        }
+        for k, v in sorted(tipo_data.items(), key=lambda x: -x[1]["m"])
+    ]
+
+    # ── Serie temporal (por fecha_entrega) ────────────────────────────────────
+    def _fg_et(row):
+        return row["fecha_entrega"].isoformat() if row["fecha_entrega"] else ""
+
+    temporal = aggregate_temporal(
+        et_periodo,
+        date_getter=_fg_et,
+        metric_getters={
+            "entregados":    lambda row: 1,
+            "monto":         lambda row: row["total"],
+            "monto_local":   lambda row: row["total"] if row["tipo_envio"] == "Local"   else 0,
+            "monto_foraneo": lambda row: row["total"] if row["tipo_envio"] == "Foraneo" else 0,
+        },
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    periods = temporal["periodos"]
+    temporal["tendencias"] = {
+        "entregados": linear_trend([p["entregados"] for p in periods]),
+        "monto":      linear_trend([p["monto"]      for p in periods]),
+    }
+
+    # ── Tables ────────────────────────────────────────────────────────────────
+    cli_data = defaultdict(lambda: {"n": 0, "m": 0.0})
+    for r in et_periodo:
+        c = r["cliente"]
+        cli_data[c]["n"] += 1
+        cli_data[c]["m"] += r["total"]
+    top_clientes = [
+        {"cliente": k, "n": v["n"], "m": round(v["m"], 2)}
+        for k, v in sorted(cli_data.items(), key=lambda x: -x[1]["m"])[:10]
+    ]
+
+    # Pedidos lentos: ciclo > mediana×2 (mínimo 14 días)
+    umbral_lento = max(ciclo_med * 2, 14.0) if ciclo_med > 0 else 14.0
+    pedidos_lentos = []
+    for r in et_periodo:
+        if r["fecha_aprob"] and r["fecha_entrega"]:
+            d = days_diff(r["fecha_aprob"], r["fecha_entrega"])
+            if d is not None and d >= umbral_lento:
+                pedidos_lentos.append({
+                    "nombre":        r["nombre"],
+                    "cliente":       r["cliente"],
+                    "tipo_envio":    r["tipo_envio"],
+                    "total":         r["total"],
+                    "ciclo_dias":    d,
+                    "fecha_entrega": r["fecha_entrega"].date().isoformat() if r["fecha_entrega"] else "",
+                })
+    pedidos_lentos = sorted(pedidos_lentos, key=lambda x: -x["ciclo_dias"])[:20]
+
+    def _iso(dt):
+        return dt.date().isoformat() if dt else ""
+
+    tabla_incompletos = [
+        {
+            "nombre":              r["nombre"],
+            "cliente":             r["cliente"],
+            "estado":              r["estado"],
+            "motivo":              r["motivo"],
+            "prioridad":           r["prioridad"],
+            "productos_faltantes": r["productos_faltantes"],
+            "fecha_creacion":      _iso(r["fecha_creacion"]),
+            "notas":               r["notas"],
+        }
+        for r in (pendientes + completados)
+    ]
+
+    # Histograma de ciclo total
+    LEAD_BINS = [
+        ("0–3 d",   0,  4),
+        ("4–7 d",   4,  8),
+        ("8–14 d",  8, 15),
+        ("15–21 d", 15, 22),
+        ("22–30 d", 22, 31),
+        ("31+ d",   31, None),
+    ]
+    hist_counts = histog(leads_ciclo, LEAD_BINS)
+    lead_hist = [{"rango": lbl, "n": hist_counts[lbl]} for lbl, _, _ in LEAD_BINS]
+
+    # ── Señales ───────────────────────────────────────────────────────────────
+    signals = []
+    UMBRAL_DIAS_LENTO = 10
+
+    if ciclo_med > UMBRAL_DIAS_LENTO and n_con_lead >= 3:
+        signals.append(make_signal(
+            "entrega_lenta", "atencion", "Tiempos de entrega elevados",
+            f"La mediana del ciclo aprobación→entrega es {ciclo_med:.0f} días (umbral: {UMBRAL_DIAS_LENTO} días).",
+            period_label,
+            {"ciclo_mediana": ciclo_med, "n_pedidos": n_con_lead, "umbral": UMBRAL_DIAS_LENTO},
+            pedidos_lentos[:5],
+            "Revisar pedidos lentos — pueden tener problemas de abastecimiento o logística.",
+        ))
+    if n_pend:
+        signals.append(make_signal(
+            "incompletos_pendientes", "riesgo", "Pedidos incompletos sin resolver",
+            f"{n_pend} pedido(s) entregado(s) con faltante pendiente de resolución.",
+            period_label,
+            {"cantidad": n_pend},
+            [{"nombre": r["nombre"], "cliente": r["cliente"], "motivo": r["motivo"]} for r in pendientes[:5]],
+            "Completar la entrega o actualizar el estado en Notion.",
+        ))
+    if n_sin_fecha:
+        signals.append(make_signal(
+            "captura_fecha_incompleta", "info", "Pedidos sin fechas completas",
+            f"{n_sin_fecha} pedido(s) entregado(s) sin fecha de envío o entrega — lead time incalculable.",
+            period_label,
+            {"cantidad": n_sin_fecha},
+            [],
+            "Capturar las fechas en Notion para completar el análisis de tiempos.",
+        ))
+    if pct_faltante > 0.5 and n_entregados >= 5:
+        signals.append(make_signal(
+            "pedido_con_faltante", "atencion", "Alto porcentaje de pedidos con faltante",
+            f"{n_con_faltante} de {n_entregados} pedidos ({pct_faltante * 100:.0f}%) tienen faltante marcado.",
+            period_label,
+            {"pct_faltante": pct_faltante, "n_con_faltante": n_con_faltante},
+            [],
+            "Revisar gestión de inventario y proceso de preparación.",
+        ))
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "n_aprobados":              n_aprobados,
+            "n_enviados":               n_enviados,
+            "n_entregados":             n_entregados,
+            "monto_entregado":          monto_entregado,
+            "n_con_faltante":           n_con_faltante,
+            "pct_faltante":             pct_faltante,
+            "pct_empacado_prom":        pct_empacado_prom,
+            "lead_aprob_envio_prom":    lead_ap_en_prom,
+            "lead_aprob_envio_med":     lead_ap_en_med,
+            "lead_envio_entrega_prom":  lead_en_et_prom,
+            "lead_envio_entrega_med":   lead_en_et_med,
+            "ciclo_total_prom":         ciclo_prom,
+            "ciclo_total_med":          ciclo_med,
+            "n_con_lead":               n_con_lead,
+            "n_incompletos_pendientes": n_pend,
+            "n_incompletos_total":      len(seg_norm),
+            "n_sin_fecha":              n_sin_fecha,
+            "senales":                  len(signals),
+        },
+        "series": {
+            "temporal":   temporal,
+            "estado":     series_estado,
+            "tipo_envio": series_tipo_envio,
+            "lead_hist":  lead_hist,
+        },
+        "tables": {
+            "top_clientes":   top_clientes,
+            "pedidos_lentos": pedidos_lentos,
+            "incompletos":    tabla_incompletos,
         },
         "signals": signals,
     }
