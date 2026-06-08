@@ -997,7 +997,7 @@ def render_index() -> str:
         <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
         <button class="module-tab" type="button" data-module="pagos_proveedores">Pagos Proveedores</button>
         <button class="module-tab" type="button" data-module="gastos_operativos">Gastos Operativos</button>
-        <button class="module-tab" type="button" data-module="logistica">Log&#237;stica</button>
+        <button class="module-tab" type="button" data-module="logistica">Logistica</button>
         <button class="module-tab" type="button" data-module="inventario">Inventario</button>
         <button class="module-tab" type="button" data-module="finanzas">Finanzas</button>
         <button class="module-tab" type="button" data-module="pnl">P&amp;L</button>
@@ -1579,34 +1579,34 @@ def render_index() -> str:
 
         </section>
 
-        <section id="logisticaPanel" class="logistica-panel" aria-label="Log&#237;stica de pedidos" hidden>
+        <section id="logisticaPanel" class="logistica-panel" aria-label="Logistica de pedidos" hidden>
           <div class="kpi-grid cobranza-kpi-grid" id="logisticaKpiGrid">
-            <p class="panel-state">Cargando log&#237;stica...</p>
+            <p class="panel-state">Cargando logistica...</p>
           </div>
 
           <section class="status-section" id="logisticaTemporalSection" hidden>
             <h2 class="section-title" id="logisticaTemporalTitle">Entregas por periodo</h2>
             <p class="section-subtitle" id="logisticaTemporalSubtitle"></p>
             <div class="weekly-chart-wrap" style="height:320px;width:100%">
-              <canvas class="weekly-chart" id="logisticaTemporalChart" width="760" height="320" aria-label="Entregas por periodo (Local vs For&#225;neo)" style="width:100%;height:100%;display:block"></canvas>
+              <canvas class="weekly-chart" id="logisticaTemporalChart" width="760" height="320" aria-label="Entregas por periodo (Local vs Foraneo)" style="width:100%;height:100%;display:block"></canvas>
               <div class="chart-tooltip" id="logisticaTemporalTooltip" hidden></div>
             </div>
           </section>
 
           <section class="status-section" id="logisticaTiemposSection" hidden>
             <h2 class="section-title">Tiempos de ciclo</h2>
-            <p class="section-subtitle">Lead time entre aprobaci&#243;n, env&#237;o y entrega (solo pedidos entregados con fechas completas).</p>
+            <p class="section-subtitle">Lead time entre aprobacion, envio y entrega (solo pedidos entregados con fechas completas).</p>
             <div id="logisticaTiemposCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
               <div>
-                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Fases del ciclo (mediana vs promedio, d&#237;as)</p>
+                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Fases del ciclo (mediana vs promedio, dias)</p>
                 <div class="weekly-chart-wrap" style="height:240px">
                   <canvas class="weekly-chart" id="logisticaLeadChart" width="480" height="240" aria-label="Lead times por fase" style="width:100%;height:100%;display:block"></canvas>
                   <div class="chart-tooltip" id="logisticaLeadTooltip" hidden></div>
                 </div>
               </div>
               <div>
-                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Distribuci&#243;n del ciclo total</p>
+                <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">Distribucion del ciclo total</p>
                 <canvas id="logisticaLeadHistChart" style="width:100%;display:block" aria-label="Histograma ciclo total"></canvas>
                 <div class="chart-tooltip" id="logisticaLeadHistTooltip" hidden></div>
               </div>
@@ -1614,16 +1614,16 @@ def render_index() -> str:
           </section>
 
           <section class="status-section" id="logisticaTipoEnvioSection" hidden>
-            <h2 class="section-title">Local vs For&#225;neo</h2>
-            <p class="section-subtitle">Comparativa de vol&#250;men, monto y tiempos entre tipo de env&#237;o.</p>
+            <h2 class="section-title">Local vs Foraneo</h2>
+            <p class="section-subtitle">Comparativa de volumen, monto y tiempos entre tipo de envio.</p>
             <div id="logisticaTipoCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <canvas id="logisticaTipoChart" style="width:100%;display:block" aria-label="Monto por tipo de env&#237;o"></canvas>
+            <canvas id="logisticaTipoChart" style="width:100%;display:block" aria-label="Monto por tipo de envio"></canvas>
             <div class="chart-tooltip" id="logisticaTipoTooltip" hidden></div>
           </section>
 
           <section class="status-section" id="logisticaEstadoSection" hidden>
             <h2 class="section-title">Estado de pedidos aprobados</h2>
-            <p class="section-subtitle">Distribuci&#243;n de todos los pedidos aprobados en el periodo por estado actual.</p>
+            <p class="section-subtitle">Distribucion de todos los pedidos aprobados en el periodo por estado actual.</p>
             <div class="status-layout">
               <div class="table-wrap">
                 <table class="status-table">
@@ -1646,7 +1646,7 @@ def render_index() -> str:
 
           <section class="status-section" id="logisticaTopClientesSection" hidden>
             <h2 class="section-title">Top 10 clientes por monto entregado</h2>
-            <p class="section-subtitle">Mayores vol&#250;menes de pedidos entregados en el periodo.</p>
+            <p class="section-subtitle">Mayores volumenes de pedidos entregados en el periodo.</p>
             <canvas id="logisticaTopClientesChart" style="width:100%;display:block" aria-label="Top clientes por monto entregado"></canvas>
             <div class="chart-tooltip" id="logisticaTopClientesTooltip" hidden></div>
           </section>
@@ -1666,11 +1666,11 @@ def render_index() -> str:
 
           <section class="status-section" id="logisticaLentosSection" hidden>
             <h2 class="section-title">Pedidos con ciclo largo</h2>
-            <p class="section-subtitle" id="logisticaLentosSubtitle">Pedidos cuyo ciclo aprobaci&#243;n&#8594;entrega supera el doble de la mediana.</p>
+            <p class="section-subtitle" id="logisticaLentosSubtitle">Pedidos cuyo ciclo aprobacion→entrega supera el doble de la mediana.</p>
             <div class="table-wrap">
               <table class="status-table">
                 <thead>
-                  <tr><th>Pedido</th><th>Cliente</th><th>Tipo</th><th>Monto</th><th>Ciclo (d&#237;as)</th><th>Entregado</th></tr>
+                  <tr><th>Pedido</th><th>Cliente</th><th>Tipo</th><th>Monto</th><th>Ciclo (dias)</th><th>Entregado</th></tr>
                 </thead>
                 <tbody id="logisticaLentosRows"></tbody>
               </table>
@@ -6199,13 +6199,13 @@ def render_index() -> str:
       cards.push(`<article class="kpi-card primary"><h2>Embudo del periodo</h2><div class="kpi-pair">${metric('Aprobados', formatNumber(kpis.n_aprobados), 'En el periodo')}${metric('Enviados', formatNumber(kpis.n_enviados), 'Enviados')}</div>${metric('Entregados', formatNumber(kpis.n_entregados), 'Ciclo completo')}</article>`);
       cards.push(`<article class="kpi-card accent"><h2>Monto entregado</h2><div class="kpi-pair">${metric('Total', formatMoney(kpis.monto_entregado), 'Valor pedidos entregados')}${metric('% empacado prom.', kpis.pct_empacado_prom + '%', 'Pedidos entregados')}</div></article>`);
       const leadStyle = kpis.ciclo_total_med > 10 ? 'warning' : 'accent';
-      cards.push(`<article class="kpi-card ${leadStyle}"><h2>Ciclo de entrega</h2><div class="kpi-pair">${metric('Ciclo total (med.)', kpis.ciclo_total_med + ' d', 'Aprobaci&#243;n&#8594;entrega')}${metric('Aprobaci&#243;n&#8594;env&#237;o (med.)', kpis.lead_aprob_envio_med + ' d', 'Preparaci&#243;n')}</div>${metric('Env&#237;o&#8594;entrega (med.)', kpis.lead_envio_entrega_med + ' d', 'Tr&#225;nsito')}</article>`);
+      cards.push(`<article class="kpi-card ${leadStyle}"><h2>Ciclo de entrega</h2><div class="kpi-pair">${metric('Ciclo total (med.)', kpis.ciclo_total_med + ' d', 'Aprobacion→entrega')}${metric('Aprobacion→envio (med.)', kpis.lead_aprob_envio_med + ' d', 'Preparacion')}</div>${metric('Envio→entrega (med.)', kpis.lead_envio_entrega_med + ' d', 'Transito')}</article>`);
       const faltStyle = kpis.n_incompletos_pendientes > 0 ? 'warning' : 'accent';
       cards.push(`<article class="kpi-card ${faltStyle}"><h2>Calidad de entrega</h2><div class="kpi-pair">${metric('Con faltante (' + faltPct + ')', formatNumber(kpis.n_con_faltante), 'De ' + kpis.n_entregados + ' entregados')}${metric('Incompletos pendientes', formatNumber(kpis.n_incompletos_pendientes), 'Sin resolver')}</div></article>`);
       if (logisticaKpiGrid) logisticaKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
 
-      // ── Temporal (Local vs For&#225;neo por periodo) ──────────────────────────────
+      // ── Temporal (Local vs Foraneo por periodo) ──────────────────────────────
       const temporal = body.series?.temporal;
       const tempSection = document.querySelector('#logisticaTemporalSection');
       if (temporal && temporal.periodos && temporal.periodos.length) {
@@ -6219,7 +6219,7 @@ def render_index() -> str:
           document.querySelector('#logisticaTemporalTooltip'),
           temporal.periodos,
           { seriesA: { key: 'monto_local',   label: 'Local',    color: LOG_LOCAL_COLOR   },
-            seriesB: { key: 'monto_foraneo',  label: 'For&#225;neo', color: LOG_FORANEO_COLOR },
+            seriesB: { key: 'monto_foraneo',  label: 'Foraneo', color: LOG_FORANEO_COLOR },
             labelKey: 'etiqueta', valueFmt: formatMoney, state: logisticaTemporalState }
         );
       } else { if (tempSection) tempSection.hidden = true; }
@@ -6231,13 +6231,13 @@ def render_index() -> str:
         const tiemposCards = document.querySelector('#logisticaTiemposCards');
         if (tiemposCards) tiemposCards.innerHTML = [
           { label: 'Ciclo total', prom: kpis.ciclo_total_prom, med: kpis.ciclo_total_med },
-          { label: 'Aprobaci&#243;n&#8594;Env&#237;o', prom: kpis.lead_aprob_envio_prom, med: kpis.lead_aprob_envio_med },
-          { label: 'Env&#237;o&#8594;Entrega', prom: kpis.lead_envio_entrega_prom, med: kpis.lead_envio_entrega_med },
+          { label: 'Aprobacion→Envio', prom: kpis.lead_aprob_envio_prom, med: kpis.lead_aprob_envio_med },
+          { label: 'Envio→Entrega', prom: kpis.lead_envio_entrega_prom, med: kpis.lead_envio_entrega_med },
         ].map(t => `<div class="tiempos-kpi"><span>${t.label}</span><strong>${t.med} d</strong><small>prom ${t.prom} d</small></div>`).join('');
         // Barras agrupadas: fases
         const leadData = [
-          { fase: 'Aprob.&#8594;Env&#237;o', med: kpis.lead_aprob_envio_med,    prom: kpis.lead_aprob_envio_prom  },
-          { fase: 'Env&#237;o&#8594;Entrega', med: kpis.lead_envio_entrega_med, prom: kpis.lead_envio_entrega_prom },
+          { fase: 'Aprob.→Envio', med: kpis.lead_aprob_envio_med,    prom: kpis.lead_aprob_envio_prom  },
+          { fase: 'Envio→Entrega', med: kpis.lead_envio_entrega_med, prom: kpis.lead_envio_entrega_prom },
           { fase: 'Ciclo Total',          med: kpis.ciclo_total_med,         prom: kpis.ciclo_total_prom        },
         ];
         drawGroupedBarChart(
@@ -6261,7 +6261,7 @@ def render_index() -> str:
         }
       } else { if (tiemposSection) tiemposSection.hidden = true; }
 
-      // ── Local vs For&#225;neo ─────────────────────────────────────────────────────
+      // ── Local vs Foraneo ─────────────────────────────────────────────────────
       const tipoSection = document.querySelector('#logisticaTipoEnvioSection');
       const seriesTipo = body.series?.tipo_envio || [];
       if (seriesTipo.length) {
@@ -6316,7 +6316,7 @@ def render_index() -> str:
       if (lentos.length) {
         if (lentosSection) lentosSection.hidden = false;
         const subLent = document.querySelector('#logisticaLentosSubtitle');
-        if (subLent && kpis.ciclo_total_med > 0) subLent.textContent = `Pedidos con ciclo > ${(kpis.ciclo_total_med * 2).toFixed(0)} d&#237;as (2&#215; la mediana de ${kpis.ciclo_total_med} d).`;
+        if (subLent && kpis.ciclo_total_med > 0) subLent.textContent = `Pedidos con ciclo > ${(kpis.ciclo_total_med * 2).toFixed(0)} dias (2x la mediana de ${kpis.ciclo_total_med} d).`;
         const tbody3 = document.querySelector('#logisticaLentosRows');
         if (tbody3) tbody3.innerHTML = lentos.map(r =>
           `<tr><td>${escapeHtml(r.nombre || '—')}</td><td>${escapeHtml(r.cliente || '—')}</td><td>${escapeHtml(r.tipo_envio || '—')}</td><td>${formatMoney(r.total)}</td><td style="font-weight:700;color:#d96058">${r.ciclo_dias} d</td><td>${escapeHtml(r.fecha_entrega || '—')}</td></tr>`
@@ -6330,7 +6330,7 @@ def render_index() -> str:
       try {
         const response = await fetch('/api/dashboard/logistica');
         const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de log&#237;stica.');
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de logistica.');
         renderLogistica(body);
         logisticaLoaded = true;
       } catch (error) {
