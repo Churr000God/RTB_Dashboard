@@ -982,6 +982,14 @@ def render_index() -> str:
         <p class="status-detail" id="statusDetail">Sin envio. Selecciona fechas y entorno para llamar n8n.</p>
       </section>
 
+      <section class="status-card" id="dataFilesCard" aria-live="polite">
+        <div class="status-row">
+          <span class="status-label">Archivos en data/</span>
+          <span class="pill" id="dataFilesBadge">...</span>
+        </div>
+        <p class="status-detail" id="dataFilesDetail">Verificando...</p>
+      </section>
+
       <div class="payload">
         <b>Payload</b>
         <code id="payloadPreview">PAYLOAD_TEXT</code>
@@ -1949,6 +1957,34 @@ def render_index() -> str:
       statusBadge.textContent = label;
       statusBadge.className = kind ? `pill ${kind}` : 'pill';
       statusDetail.textContent = detail;
+    }
+
+    async function refreshDataFiles() {
+      const badge  = document.querySelector('#dataFilesBadge');
+      const detail = document.querySelector('#dataFilesDetail');
+      try {
+        const resp = await fetch('/api/data-files');
+        const body = await resp.json();
+        const count = body.count || 0;
+        if (badge) {
+          badge.textContent = count === 0 ? '0 archivos' : count + (count === 1 ? ' archivo' : ' archivos');
+          badge.className   = count > 0 ? 'pill success' : 'pill';
+        }
+        if (detail) {
+          if (count === 0) {
+            detail.textContent = 'Carpeta vacia. Activa el webhook para descargar archivos.';
+          } else {
+            const nombres = body.files
+              .map(f => f.replace(/_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}\\.csv$/, ''))
+              .slice(0, 6).join(', ');
+            const extra = count > 6 ? ` (+${count - 6} mas)` : '';
+            detail.textContent = nombres + extra;
+          }
+        }
+      } catch (_) {
+        if (badge)  { badge.textContent = '?'; badge.className = 'pill'; }
+        if (detail) detail.textContent = 'No se pudo leer data/.';
+      }
     }
 
     function showDownloadOverlay() {
@@ -6554,6 +6590,7 @@ def render_index() -> str:
         const body = await response.json();
         if (!response.ok) throw new Error(body.detail || 'La llamada no pudo completarse.');
         setStatus('Completado', 'success', `Archivos procesados: ${body.files?.length || 0}`);
+        await refreshDataFiles();
         window.location.reload();
       } catch (error) {
         hideDownloadOverlay();
@@ -6581,6 +6618,7 @@ def render_index() -> str:
         if (!response.ok) throw new Error(body.detail || 'No se pudo regenerar.');
         const archivados = body.archived?.length || 0;
         setStatus('Regenerado', 'success', `Snapshots actualizados. ${archivados} archivo${archivados !== 1 ? 's' : ''} archivado${archivados !== 1 ? 's' : ''}.`);
+        await refreshDataFiles();
         window.location.reload();
       } catch (error) {
         setStatus('Error', 'error', error.message);
@@ -6591,6 +6629,7 @@ def render_index() -> str:
     });
 
     refreshPayload();
+    refreshDataFiles();
     loadVentasKpis();
   </script>
 </body>
@@ -6691,6 +6730,15 @@ def create_app(
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/data-files")
+    def data_files(request: Request) -> dict:
+        data_dir = request.app.state.data_dir
+        try:
+            files = sorted([f for f in os.listdir(data_dir) if f.endswith(".csv")])
+        except FileNotFoundError:
+            files = []
+        return {"count": len(files), "files": files}
 
     @app.post("/api/actualizar-datos", status_code=status.HTTP_202_ACCEPTED)
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
