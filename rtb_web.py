@@ -42,7 +42,7 @@ GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
 LOGISTICA_SNAPSHOT_FILENAME         = "logistica_latest.json"
 FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
-CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "600"))
+CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "13200"))  # 220 min × 60 s
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
 
 
