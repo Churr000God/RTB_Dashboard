@@ -2445,7 +2445,8 @@ def _margen_linea_ventas(row, pfx="Partidas_facturas_ventas_"):
 
 def build_inventario_dashboard(inventario_rows, ventas_rows,
                                period_label="Periodo actual",
-                               fecha_desde=None, fecha_hasta=None):
+                               fecha_desde=None, fecha_hasta=None,
+                               cotizaciones=None):
     """Tab Inventario: valor de stock + % inmovilizado + margen bruto por periodo.
 
     inventario_rows: filas de Crecimineto_inventario_*.csv
@@ -2585,6 +2586,15 @@ def build_inventario_dashboard(inventario_rows, ventas_rows,
         key=lambda x: x["margen"]
     )[:10]
 
+    # Lookup UUID → nombre de cotizacion
+    _cot_nombre = {}
+    if cotizaciones:
+        for r in cotizaciones:
+            cid = (r.get("Cotizacion_id") or "").strip()
+            nom = (r.get("Cotizacion_nombre") or "").strip()
+            if cid:
+                _cot_nombre[cid] = nom or cid
+
     # Top pedidos por margen
     por_cot = defaultdict(lambda: {"venta": 0.0, "costo": 0.0, "margen": 0.0, "n": 0})
     for v in periodo_vtas:
@@ -2594,7 +2604,8 @@ def build_inventario_dashboard(inventario_rows, ventas_rows,
         d["margen"] += v["margen"]
         d["n"]      += 1
     top_pedidos_margen = sorted(
-        [{"cotizacion": k, **v, "pct": v["margen"]/v["venta"] if v["venta"] else 0.0} for k, v in por_cot.items()],
+        [{"cotizacion": _cot_nombre.get(k, k), **v, "pct": v["margen"]/v["venta"] if v["venta"] else 0.0}
+         for k, v in por_cot.items()],
         key=lambda x: -x["margen"]
     )[:15]
 

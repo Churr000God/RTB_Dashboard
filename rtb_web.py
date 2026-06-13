@@ -647,12 +647,17 @@ def publish_inventario_snapshot(
     inv_path = find_latest_inventario_csv(data_dir)
     vta_path = find_latest_partidas_ventas_csv(data_dir)
     period_label = f"{fecha_desde} a {fecha_hasta}"
+    try:
+        cot_rows = load_cotizaciones(data_dir)
+    except FileNotFoundError:
+        cot_rows = []
     inventario = build_inventario_dashboard(
         read_csv(inv_path),
         read_csv(vta_path),
         period_label=period_label,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
+        cotizaciones=cot_rows,
     )
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1859,17 +1864,61 @@ def render_index() -> str:
           <section class="status-section" id="inventarioStockSection" hidden>
             <h2 class="section-title">Valor de inventario</h2>
             <p class="section-subtitle" id="inventarioStockSubtitle">Snapshot mas reciente de Notion.</p>
-            <div id="inventarioStockCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
-            <canvas id="inventarioStockChart" style="width:100%;display:block" aria-label="Inventario mensual"></canvas>
-            <div class="chart-tooltip" id="inventarioStockTooltip" hidden></div>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead>
+                    <tr>
+                      <th>Tipo</th>
+                      <th>Valor</th>
+                      <th>% valor</th>
+                    </tr>
+                  </thead>
+                  <tbody id="invValorRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="invValorPie" width="520" height="520" aria-label="Distribucion del valor de inventario"></canvas>
+                  <div class="pie-center" id="invValorPieCenter"><strong>—</strong><span>Total</span></div>
+                </div>
+                <div class="chart-tooltip" id="invValorTooltip" hidden></div>
+                <div class="pie-legend" id="invValorLegend"></div>
+              </div>
+            </div>
           </section>
 
           <section class="status-section" id="inventarioMargenSection" hidden>
             <h2 class="section-title">Margen bruto por periodo</h2>
             <p class="section-subtitle">Venta - costo de compra por partida de factura de venta. Solo partidas en el rango de fechas.</p>
-            <div class="weekly-chart-wrap" style="height:300px;width:100%">
-              <canvas class="weekly-chart" id="inventarioMargenChart" width="760" height="300" aria-label="Venta, costo y margen por periodo" style="width:100%;height:100%;display:block"></canvas>
-              <div class="chart-tooltip" id="inventarioMargenTooltip" hidden></div>
+            <div class="weekly-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead>
+                    <tr>
+                      <th id="margenTableHeading">Periodo</th>
+                      <th>Venta</th>
+                      <th>Costo</th>
+                      <th>Margen</th>
+                      <th>% Margen</th>
+                    </tr>
+                  </thead>
+                  <tbody id="inventarioMargenRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap" style="height:300px">
+                  <canvas class="weekly-chart" id="inventarioMargenChart" width="760" height="300" aria-label="Venta, costo y margen por periodo" style="width:100%;height:100%;display:block"></canvas>
+                  <div class="chart-tooltip" id="inventarioMargenTooltip" hidden></div>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#276f86"></span>Venta</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#d96058"></span>Costo</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#57c5b6"></span>Margen</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#276f86;border-top:2px dashed #276f86;background:none"></span>Tend. venta</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#57c5b6;border-top:2px dashed #57c5b6;background:none"></span>Tend. margen</span>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -6758,6 +6807,335 @@ def render_index() -> str:
       }
     }
 
+    // ── Inventario — Valor de inventario dona ────────────────────────────────
+
+    const invValorPie       = document.querySelector('#invValorPie');
+    const invValorPieCenter = document.querySelector('#invValorPieCenter');
+    const invValorTooltipEl = document.querySelector('#invValorTooltip');
+    const invValorLegend    = document.querySelector('#invValorLegend');
+    const invValorRows      = document.querySelector('#invValorRows');
+    const invValorChart     = { slices: [], activeIndex: null };
+
+    function renderInvValorChart(activeIndex = null) {
+      if (!invValorPie || !invValorChart.slices.length) return;
+      const ctx  = invValorPie.getContext('2d');
+      const rect = invValorPie.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      invValorPie.width  = Math.max(1, Math.round(rect.width  * dpr));
+      invValorPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius      = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      invValorChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function invValorSliceAtEvent(event) {
+      if (!invValorPie) return null;
+      const rect = invValorPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top  - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return invValorChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveInvValor(index, event) {
+      invValorChart.activeIndex = index >= 0 ? index : null;
+      renderInvValorChart(invValorChart.activeIndex);
+      if (invValorLegend)
+        invValorLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === invValorChart.activeIndex));
+      if (invValorRows)
+        invValorRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === invValorChart.activeIndex));
+      if (invValorChart.activeIndex === null) {
+        if (invValorTooltipEl) invValorTooltipEl.hidden = true;
+        if (invValorPieCenter) invValorPieCenter.innerHTML = `<strong>${formatMoney(invValorChart.total || 0)}</strong><span>Total</span>`;
+        return;
+      }
+      const slice = invValorChart.slices[invValorChart.activeIndex];
+      if (invValorPieCenter)
+        invValorPieCenter.innerHTML = `<strong>${formatPercent(slice.montoPct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
+      if (event && invValorTooltipEl) placeTooltipNear(invValorTooltipEl, event.clientX, event.clientY);
+      if (invValorTooltipEl) {
+        invValorTooltipEl.innerHTML = `
+          <b>${escapeHtml(slice.estado)}</b>
+          <div><span>Valor</span><strong>${formatMoney(slice.monto)}</strong></div>
+          <div><span>% valor</span><strong>${formatPercent(slice.montoPct)}</strong></div>
+        `;
+        invValorTooltipEl.hidden = false;
+      }
+    }
+
+    function renderInvValor(items) {
+      const rows = [...(items || [])].sort((a, b) => Number(b.m || 0) - Number(a.m || 0));
+      const totalMonto = rows.reduce((sum, row) => sum + Number(row.m || 0), 0);
+      invValorChart.total = totalMonto;
+      const stockSec = document.querySelector('#inventarioStockSection');
+      if (!rows.length || !totalMonto) {
+        if (stockSec) stockSec.hidden = true;
+        return;
+      }
+      if (stockSec) stockSec.hidden = false;
+      if (invValorRows) {
+        invValorRows.innerHTML = rows.map((row, index) => {
+          const color    = statusColors[index % statusColors.length];
+          const montoPct = totalMonto ? Number(row.m || 0) / totalMonto : 0;
+          return `
+            <tr data-index="${index}">
+              <td><span class="status-name" style="--status-color: ${color}"><span class="status-dot"></span>${escapeHtml(row.estado)}</span></td>
+              <td>${formatMoney(row.m)}</td>
+              <td>${formatPercent(montoPct)}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+      let current = -Math.PI / 2;
+      invValorChart.slices = rows.map((row, index) => {
+        const value = Number(row.m || 0);
+        const span  = totalMonto ? (value / totalMonto) * Math.PI * 2 : 0;
+        const slice = {
+          estado:   row.estado,
+          monto:    value,
+          montoPct: totalMonto ? value / totalMonto : 0,
+          color:    statusColors[index % statusColors.length],
+          start:    current,
+          end:      current + span,
+        };
+        current += span;
+        return slice;
+      });
+      if (invValorLegend) {
+        invValorLegend.innerHTML = invValorChart.slices.map((slice, index) => `
+          <button class="legend-item" type="button" style="--status-color: ${slice.color}" data-index="${index}">
+            <span class="legend-swatch"></span>
+            <span>${escapeHtml(slice.estado)}</span>
+            <strong>${formatPercent(slice.montoPct)}</strong>
+          </button>
+        `).join('');
+      }
+      setActiveInvValor(null);
+    }
+
+    if (invValorPie) {
+      invValorPie.addEventListener('mousemove', (event) => {
+        const index = invValorSliceAtEvent(event);
+        if (index >= 0) setActiveInvValor(index, event);
+        else setActiveInvValor(null);
+      });
+      invValorPie.addEventListener('mouseleave', () => setActiveInvValor(null));
+    }
+    if (invValorLegend) {
+      invValorLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (!item) return;
+        setActiveInvValor(Number(item.dataset.index), event);
+      });
+      invValorLegend.addEventListener('mouseleave', () => setActiveInvValor(null));
+    }
+    if (invValorRows) {
+      invValorRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        setActiveInvValor(Number(row.dataset.index), event);
+      });
+      invValorRows.addEventListener('mouseleave', () => setActiveInvValor(null));
+    }
+
+    // ── Inventario — Margen bruto por periodo ────────────────────────────────
+
+    let inventarioMargenState = { rows: [], activeIndex: null, points: [], trends: null };
+
+    function drawMargenChart(activeIndex = null) {
+      const canvas = document.querySelector('#inventarioMargenChart');
+      if (!canvas || !inventarioMargenState.rows.length) return;
+      const ctx = canvas.getContext('2d');
+      const rect = resizeCanvasToDisplay(canvas, ctx);
+      const W = rect.width;
+      const H = rect.height;
+      const rows = inventarioMargenState.rows;
+      const trends = inventarioMargenState.trends;
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = W - pad.left - pad.right;
+      const plotH = H - pad.top - pad.bottom;
+      const allVals = rows.flatMap(r => [r.venta, r.costo, r.margen]);
+      const maxVal = Math.max(...allVals, 1);
+      const minVal = Math.min(...allVals, 0);
+      const maxY = maxVal * 1.12;
+      const minY = minVal < 0 ? minVal * 1.12 : 0;
+      const rangeY = maxY - minY || 1;
+      const toX = (i) => pad.left + (i + 0.5) * (plotW / rows.length);
+      const toY = (v) => pad.top + plotH - ((v - minY) / rangeY) * plotH;
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, W, H);
+      // gridlines + Y labels
+      ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const yy = pad.top + plotH - (i / 4) * plotH;
+        ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(pad.left + plotW, yy); ctx.stroke();
+        ctx.fillStyle = '#65717e'; ctx.font = '11px system-ui,sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(formatMoney(minY + (i / 4) * rangeY), pad.left - 6, yy + 4);
+      }
+      // zero line when negative values exist
+      if (minY < 0) {
+        const y0 = toY(0);
+        ctx.beginPath(); ctx.moveTo(pad.left, y0); ctx.lineTo(pad.left + plotW, y0);
+        ctx.strokeStyle = '#c0d0d8'; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+      // X labels
+      rows.forEach((row, i) => {
+        const isAct = i === activeIndex;
+        ctx.fillStyle = isAct ? '#276f86' : '#65717e';
+        ctx.font = isAct ? 'bold 11px system-ui,sans-serif' : '11px system-ui,sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(row.etiqueta, toX(i), H - 10);
+      });
+      const series = [
+        { key: 'venta',  color: '#276f86', trendKey: 'venta'  },
+        { key: 'costo',  color: '#d96058', trendKey: null      },
+        { key: 'margen', color: '#57c5b6', trendKey: 'margen'  },
+      ];
+      inventarioMargenState.points = [];
+      // lines
+      series.forEach(({ key, color }) => {
+        ctx.beginPath();
+        rows.forEach((row, i) => { const xx = toX(i); const yy = toY(row[key]); if (i === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy); });
+        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.stroke();
+      });
+      // trend lines
+      series.forEach(({ color, trendKey }) => {
+        if (!trendKey || !trends?.[trendKey]) return;
+        const t = trends[trendKey];
+        ctx.beginPath(); ctx.moveTo(pad.left, toY(t.start)); ctx.lineTo(pad.left + plotW, toY(t.end));
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.globalAlpha = 0.6; ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+      });
+      // dots + halos
+      series.forEach(({ key, color }, si) => {
+        rows.forEach((row, i) => {
+          const xx = toX(i); const yy = toY(row[key]); const isAct = i === activeIndex;
+          if (isAct) {
+            ctx.beginPath(); ctx.arc(xx, yy, 13, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(21,152,149,.22)'; ctx.lineWidth = 6; ctx.stroke();
+          }
+          ctx.beginPath(); ctx.arc(xx, yy, isAct ? 5 : 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fbfcfd'; ctx.fill();
+          ctx.strokeStyle = color; ctx.lineWidth = isAct ? 4 : 2.5; ctx.setLineDash([]); ctx.stroke();
+          if (si === 0) inventarioMargenState.points.push({ x: xx, index: i });
+        });
+      });
+    }
+
+    function setActiveMargen(index, event) {
+      inventarioMargenState.activeIndex = index >= 0 ? index : null;
+      drawMargenChart(inventarioMargenState.activeIndex);
+      document.querySelectorAll('#inventarioMargenRows tr').forEach((row, i) =>
+        row.classList.toggle('active', i === inventarioMargenState.activeIndex)
+      );
+      const tooltip = document.querySelector('#inventarioMargenTooltip');
+      if (!tooltip) return;
+      if (inventarioMargenState.activeIndex === null) { tooltip.hidden = true; return; }
+      const row = inventarioMargenState.rows[inventarioMargenState.activeIndex];
+      if (event) placeTooltipNear(tooltip, event.clientX, event.clientY);
+      tooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Venta</span><strong>${formatMoney(row.venta)}</strong></div>
+        <div><span>Costo</span><strong>${formatMoney(row.costo)}</strong></div>
+        <div><span>Margen</span><strong>${formatMoney(row.margen)}</strong></div>
+        <div><span>% Margen</span><strong>${formatPercent(row.margenPct)}</strong></div>
+      `;
+      tooltip.hidden = false;
+    }
+
+    function renderMargenPeriodos(temporal) {
+      const margenSec = document.querySelector('#inventarioMargenSection');
+      const margenRowsEl = document.querySelector('#inventarioMargenRows');
+      const margenHead = document.querySelector('#margenTableHeading');
+      const periodos = temporal?.periodos || [];
+      if (!periodos.length) { if (margenSec) margenSec.hidden = true; return; }
+      if (margenHead) margenHead.textContent = temporal.granularidad === 'mes' ? 'Mes' : 'Semana';
+      inventarioMargenState.rows = periodos.map(p => ({
+        etiqueta: p.etiqueta || p.key,
+        venta:    Number(p.venta  || 0),
+        costo:    Number(p.costo  || 0),
+        margen:   Number(p.margen || 0),
+        margenPct: Number(p.venta || 0) ? Number(p.margen || 0) / Number(p.venta || 0) : 0,
+      }));
+      inventarioMargenState.trends = temporal.tendencias || null;
+      if (margenRowsEl) {
+        margenRowsEl.innerHTML = inventarioMargenState.rows.map((row, index) => `
+          <tr data-index="${index}">
+            <td><strong>${escapeHtml(row.etiqueta)}</strong></td>
+            <td>${formatMoney(row.venta)}</td>
+            <td>${formatMoney(row.costo)}</td>
+            <td>${formatMoney(row.margen)}</td>
+            <td>${formatPercent(row.margenPct)}</td>
+          </tr>
+        `).join('');
+      }
+      if (margenSec) margenSec.hidden = false;
+      setActiveMargen(null);
+    }
+
+    (function () {
+      const margenCanvas = document.querySelector('#inventarioMargenChart');
+      const margenRowsTbody = document.querySelector('#inventarioMargenRows');
+      if (margenCanvas) {
+        margenCanvas.addEventListener('mousemove', (event) => {
+          const rect = margenCanvas.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const pts = inventarioMargenState.points;
+          if (!pts.length) return;
+          const nearest = pts.reduce((best, pt) => {
+            const d = Math.abs(pt.x - x);
+            return d < best.d ? { index: pt.index, d } : best;
+          }, { index: -1, d: Infinity });
+          const zone = Math.max(42, rect.width / Math.max(inventarioMargenState.rows.length * 2, 1));
+          if (nearest.d <= zone) setActiveMargen(nearest.index, event);
+          else setActiveMargen(null);
+        });
+        margenCanvas.addEventListener('mouseleave', () => setActiveMargen(null));
+      }
+      if (margenRowsTbody) {
+        margenRowsTbody.addEventListener('mousemove', (event) => {
+          const row = event.target.closest('tr');
+          if (!row) return;
+          setActiveMargen(Number(row.dataset.index), event);
+        });
+        margenRowsTbody.addEventListener('mouseleave', () => setActiveMargen(null));
+      }
+    })();
+
     // ── Inventario ────────────────────────────────────────────────────────────
 
     function renderInventario(body) {
@@ -6778,92 +7156,16 @@ def render_index() -> str:
       const kpiGrid = document.querySelector('#inventarioKpiGrid');
       if (kpiGrid) { kpiGrid.innerHTML = cards.join(''); attachKpiCanvases(); }
 
-      // Seccion stock
-      const stockSec = document.querySelector('#inventarioStockSection');
+      // Seccion stock — dona valor de inventario
       const stockSub = document.querySelector('#inventarioStockSubtitle');
-      if (stockSec) {
-        stockSec.hidden = false;
-        if (stockSub && kpis.inv_nombre) stockSub.textContent = 'Ultimo snapshot: ' + kpis.inv_nombre;
-        const seriesInv = body.series?.inventario_mensual || [];
-        if (seriesInv.length) {
-          const maxVal = Math.max(...seriesInv.map(d => d.total || 0));
-          const items = seriesInv.map(d => ({
-            tipo: d.key,
-            m:    d.total || 0,
-            sm:   d.sin_mov || 0,
-          }));
-          renderHBarCanvas(
-            document.querySelector('#inventarioStockChart'),
-            document.querySelector('#inventarioStockTooltip'),
-            items,
-            { barField: 'm', labelField: 'tipo', color: '#276f86',
-              valueFmt: (v) => formatMoney(v),
-              tooltipFn: (d) => `<strong>${escapeHtml(d.tipo)}</strong><br>Total: ${formatMoney(d.m)}<br>Sin mov.: ${formatMoney(d.sm)}` }
-          );
-        }
-      }
+      if (stockSub && kpis.inv_nombre) stockSub.textContent = 'Ultimo snapshot: ' + kpis.inv_nombre;
+      renderInvValor([
+        { estado: 'Con movimiento', m: kpis.inv_activo || 0 },
+        { estado: 'Sin movimiento', m: kpis.inv_sin_mov || 0 },
+      ]);
 
       // Seccion margen temporal
-      const margenSec = document.querySelector('#inventarioMargenSection');
-      if (margenSec) {
-        const temporal = body.series?.temporal_margen;
-        if (temporal && (temporal.periodos || []).length) {
-          margenSec.hidden = false;
-          const periodos = temporal.periodos || [];
-          const canvas2 = document.querySelector('#inventarioMargenChart');
-          const tooltip2 = document.querySelector('#inventarioMargenTooltip');
-          if (canvas2 && periodos.length) {
-            const labels = periodos.map(p => p.key || '');
-            const venta  = periodos.map(p => p.venta  || 0);
-            const costo  = periodos.map(p => p.costo  || 0);
-            const margen = periodos.map(p => p.margen || 0);
-            const maxY   = Math.max(...venta) * 1.12 || 1;
-            const dpr = Math.min(window.devicePixelRatio || 1, 2);
-            const W = canvas2.parentElement.offsetWidth || 760;
-            const H = 300;
-            canvas2.width  = W * dpr;
-            canvas2.height = H * dpr;
-            canvas2.style.width  = W + 'px';
-            canvas2.style.height = H + 'px';
-            const ctx = canvas2.getContext('2d');
-            ctx.scale(dpr, dpr);
-            ctx.clearRect(0, 0, W, H);
-            const PAD = {t:16, r:16, b:36, l:72};
-            const cw = W - PAD.l - PAD.r;
-            const ch = H - PAD.t - PAD.b;
-            const n = labels.length;
-            const x = (i) => PAD.l + (i + 0.5) * (cw / n);
-            const y = (v) => PAD.t + ch - (v / maxY) * ch;
-            // gridlines
-            ctx.strokeStyle = '#e4ecf0'; ctx.lineWidth = 1;
-            for (let i = 0; i <= 4; i++) {
-              const yy = PAD.t + (ch / 4) * i;
-              ctx.beginPath(); ctx.moveTo(PAD.l, yy); ctx.lineTo(PAD.l + cw, yy); ctx.stroke();
-            }
-            const drawLine = (vals, color, alpha) => {
-              ctx.save(); ctx.globalAlpha = alpha;
-              ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
-              ctx.beginPath();
-              vals.forEach((v, i) => i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)));
-              ctx.stroke(); ctx.restore();
-            };
-            drawLine(venta,  '#276f86', 1);
-            drawLine(costo,  '#d96058', 0.75);
-            drawLine(margen, '#d0b56b', 1);
-            // labels eje X
-            ctx.fillStyle = '#65717e'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
-            labels.forEach((l, i) => ctx.fillText(l, x(i), H - 6));
-            // leyenda
-            const colors = [['#276f86','Venta'],['#d96058','Costo'],['#d0b56b','Margen']];
-            colors.forEach(([c, name], i) => {
-              const lx = PAD.l + i * 90;
-              ctx.fillStyle = c; ctx.fillRect(lx, 4, 12, 8);
-              ctx.fillStyle = '#1b2a32'; ctx.textAlign = 'left';
-              ctx.fillText(name, lx + 16, 13);
-            });
-          }
-        }
-      }
+      renderMargenPeriodos(body.series?.temporal_margen);
 
       // Seccion top margen (HBar)
       const topSec = document.querySelector('#inventarioTopSection');
