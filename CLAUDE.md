@@ -150,6 +150,19 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/finanzas_latest.json`
 - Endpoint: `GET /api/dashboard/finanzas`
 
+### P&L (Estado de Resultados — tab final)
+- **No lee CSVs**: `build_pnl_dashboard` recibe sub-dicts ya construidos (consolidador puro). Fuentes:
+  - Inventario: `venta_total` (Ingresos), `costo_total` (COGS), `margen_total` (Utilidad bruta) — partida-level, pre-IVA.
+  - Gastos Operativos: `total_subtotal` (OPEX **sin IVA**, convencion contable del E.R.).
+  - Facturacion: `monto_facturado_vigente` — solo referencia/conciliacion, NO afecta la cascada.
+- **Cascada**: Ingresos − Costo = Utilidad bruta − OPEX = Utilidad operativa (el P&L termina aqui; no hay datos de ISR).
+- **Temporal**: eje de referencia = `inventario.series.temporal_margen` (campos `venta`/`costo`/`margen`). Gastos temporales exponen `monto` con IVA — se escala por `(total_subtotal / total_total)` para quedar pre-IVA. Si `total_total == 0`, opex periodo = 0.
+- `publish_pnl_snapshot` carga `load_inventario_payload`, `load_gastos_operativos_payload`, `load_facturacion_payload` con `_safe()`. Se ejecuta **despues** de finanzas en la cadena de publish.
+- Senales: hereda `inventario.signals` + `gastos.signals`. Emite `pnl_costo_incompleto` si `n_sin_costo > 0` o `n_margen_neg > 0`.
+- Funcion: `build_pnl_dashboard(inventario, gastos_operativos, facturacion=None, ...)`
+- Snapshot: `dashboard_data/pnl_latest.json`
+- Endpoint: `GET /api/dashboard/pnl`
+
 ---
 
 ## Reglas de negocio críticas
@@ -282,9 +295,10 @@ python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 test
 python -m unittest tests/test_logistica_dashboard.py -v                # 44 tests
 python -m unittest tests/test_inventario_dashboard.py -v               # 33 tests
 python -m unittest tests/test_almacen_dashboard.py -v                  # 48 tests
-# Suite completa sin FastAPI (328 tests):
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py -v
-# Suite completa incluyendo tests de integracion FastAPI (369 tests):
+python -m unittest tests/test_pnl_dashboard.py -v                      # 66 tests
+# Suite completa sin FastAPI (394 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py tests/test_pnl_dashboard.py -v
+# Suite completa incluyendo tests de integracion FastAPI (396 tests):
 python -m unittest discover -s tests -v
 ```
 
@@ -339,6 +353,9 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-13 | Inventario — "Valor de inventario" rediseñado: dona (patron identico a "Estado de cotizacion" en Ventas) con 2 rebanadas: `Con movimiento` (inv_activo) y `Sin movimiento` (inv_sin_mov). Centro muestra valor total (`inv_total`) en reposo; al hover muestra % de la rebanada. Reemplaza el HBar de snapshots mensuales. Funciones: `renderInvValorChart` / `invValorSliceAtEvent` / `setActiveInvValor` / `renderInvValor`. Interactividad dona↔leyenda↔tabla. |
 | 2026-06-13 | Inventario — "Margen bruto por periodo" rediseñado: `weekly-layout` (tabla + canvas), inspirado en "Comportamiento semanal" de Ventas. 3 lineas (Venta `#276f86`, Costo `#d96058`, Margen `#57c5b6`) + tendencias punteadas (Venta y Margen). Dots + halos en puntos activos. Hover sincroniza canvas↔tabla. Leyenda `chart-legend` con `legend-chip`/`legend-line`. Estado: `inventarioMargenState`. Tabla: Periodo / Venta / Costo / Margen / % Margen. |
 | 2026-06-13 | Inventario — "Top pedidos por margen": `build_inventario_dashboard` ahora acepta `cotizaciones=None`. Construye lookup `Cotizacion_id → Cotizacion_nombre` y resuelve los UUIDs de `cotizaciones_a_clientes.0` a nombres legibles. `publish_inventario_snapshot` carga cotizaciones con `load_cotizaciones(data_dir)` (con fallback a `data_procesada/`). |
+| 2026-06-13 | Nuevo modulo P&L / Estado de Resultados (tab final): consolidador puro `build_pnl_dashboard(inventario, gastos_operativos, facturacion=None)`. Cascada: Ingresos (inv.venta_total) − COGS (inv.costo_total) = Utilidad bruta − OPEX (gastos.total_subtotal, SIN IVA) = Utilidad operativa. No llega a ISR/impuestos (no hay datos). facturacion = solo referencia, no afecta cascada. Temporal escalado: gastos.temporal.monto (con IVA) × (total_subtotal/total_total). Senal extra `pnl_costo_incompleto` heredada de Inventario. 66 tests nuevos + 2 de integracion FastAPI. Suite sin FastAPI: 394 tests. |
+| 2026-06-13 | P&L "Estado de Resultados" compactado: se elimino el layout `display:flex` con tabla + `<canvas>` lado a lado. Reemplazado por `div.hbar-chart` con `.hbar-row` HTML identico al patron "Top proveedores por monto pagado". Resultado: ~148px alto (5 items × 24px + 4 × 7px). Label column a 140px (inline `grid-template-columns:140px 1fr`) para que quepan los labels largos ("Gastos operativos", "Utilidad operativa"). Color por fila segun tipo (`ingreso`/`costo`/`utilidad_bruta`/`gasto`/`utilidad_operativa`). Tooltip incluye monto + `% del ingreso`. Funcion `renderPnlCascada` reescrita; `pnlEstadoTable`/`pnlEstadoRows` eliminados. |
+| 2026-06-13 | Command Center: flujo de webhook cambiado a dos fases con `localStorage`. Antes: webhook → auto-regenerar → reload. Ahora: (1) webhook termina → guarda `{fecha_desde, fecha_hasta}` en `localStorage('rtb_csv_ready')` → `location.reload()`. (2) Al cargar la pagina el init detecta el flag → lo borra → restaura fechas en el form → muestra banner `#csvReadyBanner` (teal, `style="border-color:#57c5b6"`) con badge "✓ Descargados" → dispara `autoRegenerateAfterWebhook(ctx)` automaticamente. Durante la regeneracion el badge cambia a "Regenerando..." y al terminar a "✓ Listo" → espera 1.4s → segundo `location.reload()` con snapshots frescos. Si la regeneracion falla: badge rojo "Error" con mensaje, botones desbloqueados para reintento manual. |
 
 ---
 

@@ -504,5 +504,56 @@ class ComprasAnticiposSnapshotTests(unittest.TestCase):
         self.assertEqual(kpis["n_ant"], 0)
 
 
+class PnlSnapshotTests(unittest.TestCase):
+    """Tests de integracion FastAPI para el modulo P&L (consolidador puro)."""
+
+    def test_publish_pnl_snapshot_sin_sub_snapshots(self):
+        """Cuando no hay sub-snapshots, publish_pnl_snapshot no lanza y devuelve ceros."""
+        import rtb_web
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        data_dir = root / "data"
+        data_dir.mkdir()
+        dashboard_dir = root / "dashboard"
+        dashboard_dir.mkdir()
+
+        # Llamar sin ningun sub-snapshot previo
+        snap = rtb_web.publish_pnl_snapshot(str(data_dir), str(dashboard_dir), "2026-05-01", "2026-05-31")
+
+        self.assertIn("pnl", snap["dashboard"])
+        self.assertAlmostEqual(snap["dashboard"]["pnl"]["kpis"]["ingresos"], 0.0, places=1)
+        self.assertAlmostEqual(snap["dashboard"]["pnl"]["kpis"]["utilidad_operativa"], 0.0, places=1)
+
+        written_path = dashboard_dir / "pnl_latest.json"
+        self.assertTrue(written_path.exists())
+        written = json.loads(written_path.read_text(encoding="utf-8"))
+        self.assertAlmostEqual(written["dashboard"]["pnl"]["kpis"]["ingresos"], 0.0, places=1)
+
+    def test_pnl_endpoint_returns_200(self):
+        """GET /api/dashboard/pnl responde 200 cuando el snapshot existe."""
+        from fastapi.testclient import TestClient
+        import rtb_web
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        data_dir = root / "data"
+        data_dir.mkdir()
+        dashboard_dir = root / "dashboard"
+        dashboard_dir.mkdir()
+
+        # Publicar snapshot vacio (sin CSVs)
+        rtb_web.publish_pnl_snapshot(str(data_dir), str(dashboard_dir), "2026-05-01", "2026-05-31")
+
+        client = TestClient(rtb_web.create_app(data_dir=str(data_dir), dashboard_dir=str(dashboard_dir)))
+        response = client.get("/api/dashboard/pnl")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("kpis", response.json())
+        self.assertIn("ingresos", response.json()["kpis"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ from rtb_analisis import (
     build_almacen_dashboard, build_cobranza_dashboard, build_compras_dashboard,
     build_facturacion_dashboard, build_finanzas_dashboard, build_gastos_operativos_dashboard,
     build_inventario_dashboard, build_logistica_dashboard, build_pagos_proveedores_dashboard,
-    build_ventas_dashboard,
+    build_pnl_dashboard, build_ventas_dashboard,
     find_latest_csv, find_latest_facturacion_csv, find_latest_gastos_operativos_csv,
     find_latest_inventario_csv, find_latest_logistica_csvs, find_latest_pagos_proveedores_csvs,
     find_latest_partidas_compras_csv, find_latest_partidas_ventas_csv,
@@ -46,6 +46,7 @@ LOGISTICA_SNAPSHOT_FILENAME         = "logistica_latest.json"
 INVENTARIO_SNAPSHOT_FILENAME        = "inventario_latest.json"
 ALMACEN_SNAPSHOT_FILENAME           = "almacen_latest.json"
 FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
+PNL_SNAPSHOT_FILENAME               = "pnl_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "13200"))  # 220 min × 60 s
 CSV_WAIT_DELAY_SECONDS = float(os.getenv("RTB_CSV_WAIT_DELAY_SECONDS", "1.0"))
@@ -784,6 +785,59 @@ def load_finanzas_payload(data_dir: str = "data", dashboard_dir: str = "dashboar
     )
 
 
+def publish_pnl_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    """Consolida Inventario + Gastos Operativos en el Estado de Resultados (P&L).
+    Cada sub-load esta envuelto en _safe para que un modulo sin snapshot no aborte el consolidado.
+    """
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+
+    def _safe(loader):
+        try:
+            return loader()
+        except Exception:
+            return {}
+
+    inventario       = _safe(lambda: load_inventario_payload(data_dir, dashboard_dir))
+    gastos_operativos = _safe(lambda: load_gastos_operativos_payload(data_dir, dashboard_dir))
+    facturacion      = _safe(lambda: load_facturacion_payload(data_dir, dashboard_dir))
+
+    pnl = build_pnl_dashboard(
+        inventario, gastos_operativos, facturacion,
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "dashboard": {"pnl": pnl},
+    }
+    atomic_write_json(Path(dashboard_dir) / PNL_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_pnl_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / PNL_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["pnl"]
+    # Construir al vuelo leyendo los sub-snapshots existentes
+    def _safe(loader):
+        try:
+            return loader()
+        except Exception:
+            return {}
+    return build_pnl_dashboard(
+        _safe(lambda: load_inventario_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_gastos_operativos_payload(data_dir, dashboard_dir)),
+        _safe(lambda: load_facturacion_payload(data_dir, dashboard_dir)),
+    )
+
+
 def render_index() -> str:
     today = datetime.now()
     _end = today.strftime("%Y-%m-%d")
@@ -1097,6 +1151,14 @@ def render_index() -> str:
           <span class="pill" id="dataFilesBadge">...</span>
         </div>
         <p class="status-detail" id="dataFilesDetail">Verificando...</p>
+      </section>
+
+      <section id="csvReadyBanner" class="status-card" style="border-color:#57c5b6;background:rgba(87,197,182,.07)" hidden aria-live="polite">
+        <div class="status-row">
+          <span class="status-label" id="csvReadyLabel">Archivos listos</span>
+          <span class="pill success" id="csvReadyBadge">&#10003; Descargados</span>
+        </div>
+        <p class="status-detail" id="csvReadyDetail">Iniciando regeneracion de snapshots...</p>
       </section>
 
       <div class="payload">
@@ -1856,6 +1918,66 @@ def render_index() -> str:
 
         </section>
 
+        <section id="pnlPanel" class="finanzas-panel" aria-label="Estado de Resultados P&amp;L" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="pnlKpiGrid">
+            <p class="panel-state">Cargando P&amp;L...</p>
+          </div>
+
+          <section class="status-section" id="pnlCascadaSection" hidden>
+            <h2 class="section-title">Estado de Resultados</h2>
+            <p class="section-subtitle">Ingresos &rarr; Costo de ventas &rarr; Utilidad bruta &rarr; Gastos operativos &rarr; Utilidad operativa.</p>
+            <div class="hbar-chart" id="pnlCascadaChart"></div>
+            <div class="chart-tooltip" id="pnlCascadaTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="pnlTemporalSection" hidden>
+            <h2 class="section-title">Evolucion por periodo</h2>
+            <p class="section-subtitle" id="pnlTemporalSubtitle">Ingresos, costo, utilidad bruta y utilidad operativa por periodo.</p>
+            <div class="weekly-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead>
+                    <tr>
+                      <th id="pnlPeriodoHeading">Periodo</th>
+                      <th>Ingresos</th>
+                      <th>Costo</th>
+                      <th>U. Bruta</th>
+                      <th>% Bruta</th>
+                      <th>Gastos</th>
+                      <th>U. Operativa</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pnlTemporalRows"></tbody>
+                </table>
+              </div>
+              <div>
+                <div class="weekly-chart-wrap" style="height:300px">
+                  <canvas class="weekly-chart" id="pnlTemporalChart" width="760" height="300" aria-label="Evolucion P&amp;L por periodo" style="width:100%;height:100%;display:block"></canvas>
+                  <div class="chart-tooltip" id="pnlTemporalTooltip" hidden></div>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#276f86"></span>Ingresos</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#d96058"></span>Costo</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#57c5b6"></span>U. Bruta</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#d0b56b"></span>U. Operativa</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#57c5b6;border-top:2px dashed #57c5b6;background:none"></span>Tend. bruta</span>
+                  <span class="legend-chip"><span class="legend-line" style="--status-color:#d0b56b;border-top:2px dashed #d0b56b;background:none"></span>Tend. op.</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="pnlTopSection" hidden>
+            <h2 class="section-title">Top pedidos por margen</h2>
+            <p class="section-subtitle">Cotizaciones con mayor margen bruto acumulado en el periodo.</p>
+            <div class="table-wrap"><table class="status-table">
+              <thead><tr><th>Cotizacion</th><th>Partidas</th><th>Venta</th><th>Costo</th><th>Margen</th><th>% Margen</th></tr></thead>
+              <tbody id="pnlTopRows"></tbody>
+            </table></div>
+          </section>
+
+        </section>
+
         <section id="inventarioPanel" class="logistica-panel" aria-label="Inventario y margen" hidden>
           <div class="kpi-grid cobranza-kpi-grid" id="inventarioKpiGrid">
             <p class="panel-state">Cargando inventario...</p>
@@ -2101,6 +2223,7 @@ def render_index() -> str:
     const inventarioPanel = document.querySelector('#inventarioPanel');
     const operacionPanel = document.querySelector('#operacionPanel');
     const finanzasPanel = document.querySelector('#finanzasPanel');
+    const pnlPanel = document.querySelector('#pnlPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
     const cobranzaHealthStrip = document.querySelector('#cobranzaHealthStrip');
     const pagosProveedoresKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
@@ -2109,6 +2232,7 @@ def render_index() -> str:
     const inventarioKpiGrid = document.querySelector('#inventarioKpiGrid');
     const almacenKpiGrid = document.querySelector('#almacenKpiGrid');
     const finanzasKpiGrid = document.querySelector('#finanzasKpiGrid');
+    const pnlKpiGrid = document.querySelector('#pnlKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
     const cobranzaTemporalSubtitle = document.querySelector('#cobranzaTemporalSubtitle');
@@ -2211,6 +2335,8 @@ def render_index() -> str:
     let finanzasDevGroupedState = {};
     let finanzasCajaGroupedState = {};
     let finanzasIvaGroupedState = {};
+    let pnlLoaded = false;
+    let pnlTemporalState = { rows: [], activeIndex: null, points: [], trends: null };
     let cicloEtapasState = { rows: [], activeIndex: null, points: [] };
     let cicloTemporalState = { rows: [], activeIndex: null, points: [] };
     let tipoPagoChart = { slices: [], activeIndex: null };
@@ -3755,7 +3881,8 @@ def render_index() -> str:
               }
             } else if (c.type === 'money') {
               const val = row[c.key];
-              ctx.fillStyle = '#2b3a45'; ctx.font = '11px system-ui, sans-serif';
+              ctx.fillStyle = c.colorOf ? c.colorOf(row, ri) : '#2b3a45';
+              ctx.font = '11px system-ui, sans-serif';
               ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
               ctx.fillText(formatMoney(val != null ? val : 0), cellX + cellW - 6, cy2);
             } else {
@@ -4195,7 +4322,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, logisticaKpiGrid, inventarioKpiGrid, almacenKpiGrid, finanzasKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, logisticaKpiGrid, inventarioKpiGrid, almacenKpiGrid, finanzasKpiGrid, pnlKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -6807,6 +6934,274 @@ def render_index() -> str:
       }
     }
 
+    // ── MODULO P&L (Estado de Resultados) ─────────────────────────────────────
+    const PNL_INGRESO_COLOR   = '#276f86';   // teal primario — ingresos
+    const PNL_COSTO_COLOR     = '#d96058';   // rojo — costo de ventas
+    const PNL_BRUTA_COLOR     = '#57c5b6';   // teal claro — utilidad bruta
+    const PNL_OPERATIVA_COLOR = '#d0b56b';   // dorado — utilidad operativa
+    const PNL_GASTO_COLOR     = '#8a4d4d';   // rojo oscuro — gastos op.
+
+    function drawPnlChart(activeIndex) {
+      const canvas = document.querySelector('#pnlTemporalChart');
+      if (!canvas || !pnlTemporalState.rows.length) return;
+      const ctx = canvas.getContext('2d');
+      const rect = resizeCanvasToDisplay(canvas, ctx);
+      const W = rect.width;
+      const H = rect.height;
+      const rows = pnlTemporalState.rows;
+      const trends = pnlTemporalState.trends;
+      const pad = { left: 72, right: 24, top: 26, bottom: 46 };
+      const plotW = W - pad.left - pad.right;
+      const plotH = H - pad.top - pad.bottom;
+      const allVals = rows.flatMap(r => [r.ingresos, r.costo, r.utilidad_bruta, r.utilidad_operativa]);
+      const maxVal = Math.max(...allVals, 1);
+      const minVal = Math.min(...allVals, 0);
+      const maxY = maxVal * 1.12;
+      const minY = minVal < 0 ? minVal * 1.12 : 0;
+      const rangeY = maxY - minY || 1;
+      const toX = (i) => pad.left + (i + 0.5) * (plotW / rows.length);
+      const toY = (v) => pad.top + plotH - ((v - minY) / rangeY) * plotH;
+      ctx.fillStyle = '#fbfcfd';
+      ctx.fillRect(0, 0, W, H);
+      // gridlines + Y labels
+      ctx.strokeStyle = '#e5edf2'; ctx.lineWidth = 1;
+      for (let gi = 0; gi <= 4; gi++) {
+        const yy = pad.top + plotH - (gi / 4) * plotH;
+        ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(pad.left + plotW, yy); ctx.stroke();
+        ctx.fillStyle = '#65717e'; ctx.font = '11px system-ui,sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(formatMoney(minY + (gi / 4) * rangeY), pad.left - 6, yy + 4);
+      }
+      if (minY < 0) {
+        const y0 = toY(0);
+        ctx.beginPath(); ctx.moveTo(pad.left, y0); ctx.lineTo(pad.left + plotW, y0);
+        ctx.strokeStyle = '#c0d0d8'; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+      // X labels
+      rows.forEach((row, i) => {
+        const isAct = i === activeIndex;
+        ctx.fillStyle = isAct ? '#276f86' : '#65717e';
+        ctx.font = isAct ? 'bold 11px system-ui,sans-serif' : '11px system-ui,sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(row.etiqueta, toX(i), H - 10);
+      });
+      const series = [
+        { key: 'ingresos',          color: PNL_INGRESO_COLOR,   trendKey: null },
+        { key: 'costo',             color: PNL_COSTO_COLOR,     trendKey: null },
+        { key: 'utilidad_bruta',    color: PNL_BRUTA_COLOR,     trendKey: 'utilidad_bruta' },
+        { key: 'utilidad_operativa',color: PNL_OPERATIVA_COLOR, trendKey: 'utilidad_operativa' },
+      ];
+      pnlTemporalState.points = [];
+      // lines
+      series.forEach(({ key, color }) => {
+        ctx.beginPath();
+        rows.forEach((row, i) => { const xx = toX(i); const yy = toY(row[key]); if (i === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy); });
+        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.stroke();
+      });
+      // trend lines
+      series.forEach(({ color, trendKey }) => {
+        if (!trendKey || !trends?.[trendKey]) return;
+        const t = trends[trendKey];
+        ctx.beginPath(); ctx.moveTo(pad.left, toY(t.start)); ctx.lineTo(pad.left + plotW, toY(t.end));
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.globalAlpha = 0.6; ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+      });
+      // dots + halos
+      series.forEach(({ key, color }, si) => {
+        rows.forEach((row, i) => {
+          const xx = toX(i); const yy = toY(row[key]); const isAct = i === activeIndex;
+          if (isAct) {
+            ctx.beginPath(); ctx.arc(xx, yy, 13, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(21,152,149,.22)'; ctx.lineWidth = 6; ctx.stroke();
+          }
+          ctx.beginPath(); ctx.arc(xx, yy, isAct ? 5 : 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fbfcfd'; ctx.fill();
+          ctx.strokeStyle = color; ctx.lineWidth = isAct ? 4 : 2.5; ctx.setLineDash([]); ctx.stroke();
+          if (si === 0) pnlTemporalState.points.push({ x: xx, index: i });
+        });
+      });
+    }
+
+    function setActivePnl(index, event) {
+      pnlTemporalState.activeIndex = index >= 0 ? index : null;
+      drawPnlChart(pnlTemporalState.activeIndex);
+      document.querySelectorAll('#pnlTemporalRows tr').forEach((row, i) =>
+        row.classList.toggle('active', i === pnlTemporalState.activeIndex)
+      );
+      const tooltip = document.querySelector('#pnlTemporalTooltip');
+      if (!tooltip) return;
+      if (pnlTemporalState.activeIndex === null) { tooltip.hidden = true; return; }
+      const row = pnlTemporalState.rows[pnlTemporalState.activeIndex];
+      if (event) placeTooltipNear(tooltip, event.clientX, event.clientY);
+      const pctBruta = row.ingresos ? ((row.utilidad_bruta / row.ingresos) * 100).toFixed(1) : '0.0';
+      tooltip.innerHTML = `
+        <b>${escapeHtml(row.etiqueta)}</b>
+        <div><span>Ingresos</span><strong>${formatMoney(row.ingresos)}</strong></div>
+        <div><span>Costo</span><strong>${formatMoney(row.costo)}</strong></div>
+        <div><span>U. Bruta</span><strong>${formatMoney(row.utilidad_bruta)} (${pctBruta}%)</strong></div>
+        <div><span>Gastos op.</span><strong>${formatMoney(row.gastos)}</strong></div>
+        <div><span>U. Operativa</span><strong>${formatMoney(row.utilidad_operativa)}</strong></div>
+      `;
+      tooltip.hidden = false;
+    }
+
+    function renderPnlPeriodos(temporal) {
+      const sec = document.querySelector('#pnlTemporalSection');
+      const rowsEl = document.querySelector('#pnlTemporalRows');
+      const headEl = document.querySelector('#pnlPeriodoHeading');
+      const subEl  = document.querySelector('#pnlTemporalSubtitle');
+      const periodos = temporal?.periodos || [];
+      if (!periodos.length) { if (sec) sec.hidden = true; return; }
+      if (headEl) headEl.textContent = temporal.granularidad === 'mes' ? 'Mes' : 'Semana';
+      if (subEl && temporal.chart_suffix) subEl.textContent = 'Ingresos, costo, utilidad bruta y operativa ' + temporal.chart_suffix;
+      pnlTemporalState.rows = periodos.map(p => ({
+        etiqueta:           p.etiqueta || p.key,
+        ingresos:           Number(p.ingresos           || 0),
+        costo:              Number(p.costo               || 0),
+        utilidad_bruta:     Number(p.utilidad_bruta      || 0),
+        gastos:             Number(p.gastos              || 0),
+        utilidad_operativa: Number(p.utilidad_operativa  || 0),
+      }));
+      pnlTemporalState.trends = temporal.tendencias || null;
+      if (rowsEl) {
+        rowsEl.innerHTML = pnlTemporalState.rows.map((row, index) => {
+          const pctBruta = row.ingresos ? ((row.utilidad_bruta / row.ingresos) * 100).toFixed(1) + '%' : '—';
+          return `<tr data-index="${index}">
+            <td><strong>${escapeHtml(row.etiqueta)}</strong></td>
+            <td>${formatMoney(row.ingresos)}</td>
+            <td>${formatMoney(row.costo)}</td>
+            <td>${formatMoney(row.utilidad_bruta)}</td>
+            <td>${pctBruta}</td>
+            <td>${formatMoney(row.gastos)}</td>
+            <td>${formatMoney(row.utilidad_operativa)}</td>
+          </tr>`;
+        }).join('');
+      }
+      if (sec) sec.hidden = false;
+      setActivePnl(null);
+    }
+
+    (function () {
+      const pnlCanvas = document.querySelector('#pnlTemporalChart');
+      const pnlRowsTbody = document.querySelector('#pnlTemporalRows');
+      if (pnlCanvas) {
+        pnlCanvas.addEventListener('mousemove', (event) => {
+          const rect = pnlCanvas.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const pts = pnlTemporalState.points;
+          if (!pts.length) return;
+          const nearest = pts.reduce((best, pt) => {
+            const d = Math.abs(pt.x - x);
+            return d < best.d ? { index: pt.index, d } : best;
+          }, { index: -1, d: Infinity });
+          const zone = Math.max(42, rect.width / Math.max(pnlTemporalState.rows.length * 2, 1));
+          if (nearest.d <= zone) setActivePnl(nearest.index, event);
+          else setActivePnl(null);
+        });
+        pnlCanvas.addEventListener('mouseleave', () => setActivePnl(null));
+      }
+      if (pnlRowsTbody) {
+        pnlRowsTbody.addEventListener('mousemove', (event) => {
+          const row = event.target.closest('tr');
+          if (!row) return;
+          setActivePnl(Number(row.dataset.index), event);
+        });
+        pnlRowsTbody.addEventListener('mouseleave', () => setActivePnl(null));
+      }
+    })();
+
+    function renderPnlCascada(estadoResultados) {
+      const sec = document.querySelector('#pnlCascadaSection');
+      if (!estadoResultados || !estadoResultados.length) { if (sec) sec.hidden = true; return; }
+      if (sec) sec.hidden = false;
+      const colorMap = {
+        ingreso:            PNL_INGRESO_COLOR,
+        costo:              PNL_COSTO_COLOR,
+        utilidad_bruta:     PNL_BRUTA_COLOR,
+        gasto:              PNL_GASTO_COLOR,
+        utilidad_operativa: PNL_OPERATIVA_COLOR,
+      };
+      const tipoNegrita = { utilidad_bruta: true, utilidad_operativa: true };
+      const container = document.querySelector('#pnlCascadaChart');
+      const tooltip    = document.querySelector('#pnlCascadaTooltip');
+      if (!container) return;
+      const maxVal = Math.max(...estadoResultados.map(r => Math.abs(r.monto || 0)), 1);
+      container.innerHTML = estadoResultados.map((r, i) => {
+        const color = colorMap[r.tipo] || '#276f86';
+        const pct   = Math.max(2, Math.round((Math.abs(r.monto || 0) / maxVal) * 100));
+        const fw    = tipoNegrita[r.tipo] ? 'font-weight:700;' : '';
+        return `<div class="hbar-row" data-index="${i}" style="grid-template-columns:140px 1fr" title="${escapeHtml(r.concepto || '')}">
+          <span class="hbar-label" style="${fw}color:${color}">${escapeHtml(r.concepto || '')}</span>
+          <div class="hbar-track">
+            <div class="hbar-fill" style="width:${pct}%;background:${color}">
+              <span class="hbar-fill-value">${formatMoney(Math.abs(r.monto || 0))}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+      if (tooltip) {
+        container.querySelectorAll('.hbar-row').forEach((row) => {
+          const r = estadoResultados[Number(row.dataset.index)];
+          const pctIngreso = r.pct != null ? (Math.abs(r.pct) * 100).toFixed(1) + '% del ingreso' : '';
+          row.addEventListener('mouseenter', (e) => {
+            tooltip.innerHTML = `<strong>${escapeHtml(r.concepto || '—')}</strong><br>${formatMoney(r.monto)}${pctIngreso ? '<br>' + pctIngreso : ''}`;
+            positionTooltip(tooltip, e);
+            tooltip.hidden = false;
+          });
+          row.addEventListener('mousemove', (e) => positionTooltip(tooltip, e));
+          row.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+        });
+      }
+    }
+
+    function renderPnlTop(topPedidos) {
+      const sec = document.querySelector('#pnlTopSection');
+      const rowsEl = document.querySelector('#pnlTopRows');
+      if (!topPedidos || !topPedidos.length) { if (sec) sec.hidden = true; return; }
+      if (rowsEl) {
+        rowsEl.innerHTML = topPedidos.map(d => `<tr>
+            <td>${escapeHtml(d.cotizacion || '—')}</td>
+            <td>${d.n || 0}</td>
+            <td>${formatMoney(d.venta || 0)}</td>
+            <td>${formatMoney(d.costo || 0)}</td>
+            <td>${formatMoney(d.margen || 0)}</td>
+            <td>${((d.pct || 0) * 100).toFixed(1)}%</td>
+          </tr>`).join('');
+      }
+      if (sec) sec.hidden = false;
+    }
+
+    function renderPnl(body) {
+      const kpis = body.kpis || {};
+      const pctBruta = kpis.margen_bruto != null ? (kpis.margen_bruto * 100).toFixed(1) + '%' : '—';
+      const pctOp    = kpis.margen_operativo != null ? (kpis.margen_operativo * 100).toFixed(1) + '%' : '—';
+      const utilOpClass = (kpis.utilidad_operativa || 0) >= 0 ? 'primary' : 'warning';
+      const brutaClass  = (kpis.utilidad_bruta     || 0) >= 0 ? 'accent'  : 'warning';
+      const cards = [];
+      cards.push(`<article class="kpi-card ${utilOpClass}"><h2>Utilidad operativa</h2><div class="kpi-pair">${metric('U. Bruta', formatMoney(kpis.utilidad_bruta), 'Ingresos menos costo')}${metric('Gastos op.', formatMoney(kpis.gastos_operativos), 'OPEX del periodo')}</div>${metric('Resultado (margen ' + pctOp + ')', formatMoney(kpis.utilidad_operativa), 'Utilidad operativa')}</article>`);
+      cards.push(`<article class="kpi-card ${brutaClass}"><h2>Utilidad bruta</h2><div class="kpi-pair">${metric('Ingresos', formatMoney(kpis.ingresos), 'Ventas pre-IVA')}${metric('Costo de ventas', formatMoney(kpis.costo_ventas), 'Costo de compra x cantidad')}</div>${metric('Margen bruto ' + pctBruta, formatMoney(kpis.utilidad_bruta), 'Venta menos costo')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Ingresos del periodo</h2><div class="kpi-pair">${metric('Venta pre-IVA', formatMoney(kpis.ingresos), 'Partidas de facturas')}${metric('Facturado (ref.)', formatMoney(kpis.ingresos_facturados), 'Monto facturado c/IVA')}</div></article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Gastos operativos</h2><div class="kpi-pair">${metric('OPEX (sin IVA)', formatMoney(kpis.gastos_operativos), 'Subtotal deducible + no deducible')}</div></article>`);
+      if (pnlKpiGrid) pnlKpiGrid.innerHTML = cards.join('');
+      attachKpiCanvases();
+      renderPnlCascada(body.tables?.estado_resultados);
+      renderPnlPeriodos(body.series?.temporal);
+      renderPnlTop(body.tables?.top_pedidos);
+    }
+
+    async function loadPnl() {
+      if (pnlLoaded) return;
+      const kpiGrid2 = document.querySelector('#pnlKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/pnl');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de P&L.');
+        renderPnl(body);
+        pnlLoaded = true;
+      } catch (error) {
+        if (kpiGrid2) kpiGrid2.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     // ── Inventario — Valor de inventario dona ────────────────────────────────
 
     const invValorPie       = document.querySelector('#invValorPie');
@@ -7664,6 +8059,7 @@ def render_index() -> str:
       if (inventarioPanel) inventarioPanel.hidden = moduleName !== 'inventario';
       if (operacionPanel) operacionPanel.hidden = moduleName !== 'operacion';
       if (finanzasPanel) finanzasPanel.hidden = moduleName !== 'finanzas';
+      if (pnlPanel) pnlPanel.hidden = moduleName !== 'pnl';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
       if (moduleName === 'compras') loadCompras();
@@ -7674,6 +8070,7 @@ def render_index() -> str:
       if (moduleName === 'inventario') loadInventario();
       if (moduleName === 'operacion') loadAlmacen();
       if (moduleName === 'finanzas') loadFinanzas();
+      if (moduleName === 'pnl') loadPnl();
     }
 
     form.addEventListener('input', refreshPayload);
@@ -7718,8 +8115,10 @@ def render_index() -> str:
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.detail || 'La llamada no pudo completarse.');
-        setStatus('Completado', 'success', `Archivos procesados: ${body.files?.length || 0}`);
-        await refreshDataFiles();
+        localStorage.setItem('rtb_csv_ready', JSON.stringify({
+          fecha_desde: form.fecha_desde.value,
+          fecha_hasta: form.fecha_hasta.value
+        }));
         window.location.reload();
       } catch (error) {
         hideDownloadOverlay();
@@ -7757,9 +8156,53 @@ def render_index() -> str:
       }
     });
 
+    async function autoRegenerateAfterWebhook(ctx) {
+      const banner     = document.querySelector('#csvReadyBanner');
+      const bannerBadge  = document.querySelector('#csvReadyBadge');
+      const bannerDetail = document.querySelector('#csvReadyDetail');
+      submitButton.disabled  = true;
+      regenerarButton.disabled = true;
+      if (bannerDetail) bannerDetail.textContent = 'Regenerando snapshots con archivos descargados...';
+      if (bannerBadge)  { bannerBadge.textContent = 'Regenerando...'; bannerBadge.className = 'pill'; }
+      try {
+        const response = await fetch('/api/regenerar-snapshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fecha_desde: ctx.fecha_desde, fecha_hasta: ctx.fecha_hasta })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudo regenerar.');
+        if (bannerBadge)  { bannerBadge.textContent = '✓ Listo'; bannerBadge.className = 'pill success'; }
+        if (bannerDetail) bannerDetail.textContent = 'Snapshots regenerados. Recargando dashboard...';
+        await refreshDataFiles();
+        setTimeout(() => window.location.reload(), 1400);
+      } catch (error) {
+        if (bannerBadge)  { bannerBadge.textContent = 'Error'; bannerBadge.className = 'pill error'; }
+        if (bannerDetail) bannerDetail.textContent = 'Error al regenerar: ' + error.message;
+        submitButton.disabled  = false;
+        regenerarButton.disabled = false;
+      }
+    }
+
     refreshPayload();
     refreshDataFiles();
     loadVentasKpis();
+
+    const _csvReadyRaw = localStorage.getItem('rtb_csv_ready');
+    if (_csvReadyRaw) {
+      try {
+        const _ctx = JSON.parse(_csvReadyRaw);
+        localStorage.removeItem('rtb_csv_ready');
+        if (_ctx.fecha_desde) form.fecha_desde.value = _ctx.fecha_desde;
+        if (_ctx.fecha_hasta) form.fecha_hasta.value = _ctx.fecha_hasta;
+        refreshPayload();
+        const _banner = document.querySelector('#csvReadyBanner');
+        if (_banner) _banner.hidden = false;
+        autoRegenerateAfterWebhook(_ctx);
+      } catch (_) {
+        localStorage.removeItem('rtb_csv_ready');
+      }
+    }
   </script>
 </body>
 </html>""".replace("PAYLOAD_TEXT", payload_text)
@@ -7880,6 +8323,15 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/pnl")
+    def dashboard_pnl(request: Request) -> dict:
+        try:
+            return load_pnl_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/data-files")
     def data_files(request: Request) -> dict:
         data_dir = request.app.state.data_dir
@@ -7985,6 +8437,15 @@ def create_app(
                 pass
             try:
                 publish_finanzas_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except Exception:
+                pass
+            try:
+                publish_pnl_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     payload.fecha_desde,
@@ -8100,6 +8561,15 @@ def create_app(
                 pass
             try:
                 publish_finanzas_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except Exception:
+                pass
+            try:
+                publish_pnl_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     fecha_desde,

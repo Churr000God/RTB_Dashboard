@@ -3080,6 +3080,180 @@ def build_finanzas_dashboard(
     }
 
 
+def build_pnl_dashboard(
+    inventario, gastos_operativos, facturacion=None,
+    period_label="Periodo actual", fecha_desde=None, fecha_hasta=None,
+):
+    """Estado de Resultados (P&L) — consolida Inventario + Gastos Operativos.
+
+    Recibe dicts ya construidos (no rows). Cualquier sub-dashboard puede ser {}
+    o None si su CSV no estaba disponible — se trata su aporte como 0.
+    NO lee CSVs, NO re-filtra por fecha; toda cifra deriva de los sub-dashboards.
+
+    Cascada contable:
+      Ingresos             (inventario.venta_total, pre-IVA partida-level)
+    − Costo de ventas      (inventario.costo_total)
+    = Utilidad bruta       (inventario.margen_total)
+    − Gastos operativos    (gastos.total_subtotal, SIN IVA — convencion contable)
+    = Utilidad operativa
+
+    IVA es traslado, no gasto — se reporta solo como memo informativo.
+    Solo se llega hasta Utilidad operativa: no hay datos de ISR/impuesto.
+
+    Serie temporal:
+      - Eje de referencia: inventario.series.temporal_margen (venta/costo/margen, S1–S5).
+      - gastos.series.temporal expone 'monto' con IVA incluido. Se escala por la
+        razon global (total_subtotal / total_total) para quedar pre-IVA consistente
+        con el KPI del estado de resultados. Si total_total == 0 -> opex_p = 0.
+    """
+    inv = inventario or {}
+    gas = gastos_operativos or {}
+    fac = facturacion or {}
+
+    inv_kpis = inv.get("kpis") or {}
+    gas_kpis = gas.get("kpis") or {}
+    fac_kpis = fac.get("kpis") or {}
+
+    # ── KPIs escalares ────────────────────────────────────────────────────────
+    ingresos        = float(inv_kpis.get("venta_total")  or 0)
+    costo_ventas    = float(inv_kpis.get("costo_total")  or 0)
+    utilidad_bruta  = float(inv_kpis.get("margen_total") or 0)
+    margen_bruto    = round(utilidad_bruta / ingresos, 4) if ingresos else 0.0
+
+    gas_total_sub   = float(gas_kpis.get("total_subtotal") or 0)
+    gas_total_total = float(gas_kpis.get("total_total")    or 0)
+    opex            = round(gas_total_sub, 2)
+
+    utilidad_operativa = round(utilidad_bruta - opex, 2)
+    margen_operativo   = round(utilidad_operativa / ingresos, 4) if ingresos else 0.0
+
+    # Calidad de dato heredada de Inventario
+    n_sin_costo  = int(inv_kpis.get("n_sin_costo")  or 0)
+    n_margen_neg = int(inv_kpis.get("n_margen_neg") or 0)
+
+    # Memo: ingreso facturado (base poblacional distinta, con IVA — solo referencia)
+    ingresos_facturados = float(fac_kpis.get("monto_facturado_vigente") or 0)
+
+    # ── Senales ───────────────────────────────────────────────────────────────
+    all_signals = []
+    for sub in [inv, gas]:
+        all_signals.extend(sub.get("signals") or [])
+    if n_sin_costo > 0 or n_margen_neg > 0:
+        all_signals.append({
+            "tipo": "pnl_costo_incompleto",
+            "msg": (
+                f"Calidad de dato: {n_sin_costo} partidas sin costo, "
+                f"{n_margen_neg} con margen negativo — Utilidad bruta puede estar subestimada."
+            ),
+        })
+
+    # ── Series temporales ─────────────────────────────────────────────────────
+    inv_temporal_margen = (inv.get("series") or {}).get("temporal_margen") or {}
+    gas_temporal        = (gas.get("series") or {}).get("temporal")        or {}
+
+    def _by_key(temporal):
+        return {p["key"]: p for p in (temporal.get("periodos") or [])}
+
+    if inv_temporal_margen.get("keys"):
+        ref = inv_temporal_margen
+        inv_bk = _by_key(ref)
+        gas_bk = _by_key(gas_temporal)
+
+        # Razon global para escalar monto de gastos (con IVA) a pre-IVA
+        opex_ratio = (gas_total_sub / gas_total_total) if gas_total_total else 0.0
+
+        periodos_consolidados = []
+        for key, label in zip(ref["keys"], ref["labels"]):
+            inv_p = inv_bk.get(key) or {}
+            gas_p = gas_bk.get(key) or {}
+
+            ing  = float(inv_p.get("venta")  or 0)
+            cst  = float(inv_p.get("costo")  or 0)
+            ub   = float(inv_p.get("margen") or 0)
+            gop  = round(float(gas_p.get("monto") or 0) * opex_ratio, 2)
+            uop  = round(ub - gop, 2)
+
+            periodos_consolidados.append({
+                "key":               key,
+                "etiqueta":          label,
+                "ingresos":          ing,
+                "costo":             cst,
+                "utilidad_bruta":    ub,
+                "gastos":            gop,
+                "utilidad_operativa": uop,
+            })
+
+        ub_vals  = [p["utilidad_bruta"]    for p in periodos_consolidados]
+        uop_vals = [p["utilidad_operativa"] for p in periodos_consolidados]
+        tendencias = {
+            "utilidad_bruta":    linear_trend(ub_vals),
+            "utilidad_operativa": linear_trend(uop_vals),
+        }
+        temporal = {
+            "granularidad":   ref.get("granularidad"),
+            "keys":           ref["keys"],
+            "labels":         ref["labels"],
+            "table_heading":  ref.get("table_heading"),
+            "behavior_title": ref.get("behavior_title"),
+            "chart_suffix":   ref.get("chart_suffix"),
+            "hint":           ref.get("hint"),
+            "periodos":       periodos_consolidados,
+            "tendencias":     tendencias,
+        }
+    else:
+        temporal = {}
+
+    # ── Tablas ────────────────────────────────────────────────────────────────
+    pct = lambda v: round(v / ingresos, 4) if ingresos else 0.0
+    estado_resultados = [
+        {"concepto": "Ingresos",          "monto": round(ingresos, 2),           "tipo": "ingreso",          "pct": pct(ingresos)},
+        {"concepto": "Costo de ventas",   "monto": round(-costo_ventas, 2),      "tipo": "costo",            "pct": pct(costo_ventas)},
+        {"concepto": "Utilidad bruta",    "monto": round(utilidad_bruta, 2),     "tipo": "utilidad_bruta",   "pct": margen_bruto},
+        {"concepto": "Gastos operativos", "monto": round(-opex, 2),              "tipo": "gasto",            "pct": pct(opex)},
+        {"concepto": "Utilidad operativa","monto": utilidad_operativa,           "tipo": "utilidad_operativa","pct": margen_operativo},
+    ]
+    margen_por_periodo = [
+        {
+            "key":                p["key"],
+            "etiqueta":           p["etiqueta"],
+            "ingresos":           p["ingresos"],
+            "costo":              p["costo"],
+            "utilidad_bruta":     p["utilidad_bruta"],
+            "margen_bruto_pct":   round(p["utilidad_bruta"] / p["ingresos"], 4) if p["ingresos"] else 0.0,
+            "gastos":             p["gastos"],
+            "utilidad_operativa": p["utilidad_operativa"],
+        }
+        for p in (temporal.get("periodos") or [])
+    ]
+    top_pedidos = list((inv.get("tables") or {}).get("top_pedidos_margen") or [])[:10]
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "ingresos":             round(ingresos, 2),
+            "costo_ventas":         round(costo_ventas, 2),
+            "utilidad_bruta":       round(utilidad_bruta, 2),
+            "margen_bruto":         margen_bruto,
+            "gastos_operativos":    opex,
+            "utilidad_operativa":   utilidad_operativa,
+            "margen_operativo":     margen_operativo,
+            "ingresos_facturados":  round(ingresos_facturados, 2),
+            "n_sin_costo":          n_sin_costo,
+            "n_margen_neg":         n_margen_neg,
+            "n_signals":            len(all_signals),
+        },
+        "series": {
+            "temporal": temporal,
+        },
+        "tables": {
+            "estado_resultados": estado_resultados,
+            "margen_por_periodo": margen_por_periodo,
+            "top_pedidos":        top_pedidos,
+        },
+        "signals": all_signals,
+    }
+
+
 # ─── Lectura ────────────────────────────────────────────────────────────────
 def load_all(data_dir="data", allowed_files=None):
     prefixes = {
