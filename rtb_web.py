@@ -19,11 +19,14 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from rtb_analisis import (
-    build_cobranza_dashboard, build_compras_dashboard, build_facturacion_dashboard,
-    build_finanzas_dashboard, build_gastos_operativos_dashboard,
-    build_logistica_dashboard, build_pagos_proveedores_dashboard, build_ventas_dashboard,
+    build_almacen_dashboard, build_cobranza_dashboard, build_compras_dashboard,
+    build_facturacion_dashboard, build_finanzas_dashboard, build_gastos_operativos_dashboard,
+    build_inventario_dashboard, build_logistica_dashboard, build_pagos_proveedores_dashboard,
+    build_ventas_dashboard,
     find_latest_csv, find_latest_facturacion_csv, find_latest_gastos_operativos_csv,
-    find_latest_logistica_csvs, find_latest_pagos_proveedores_csvs, load_cotizaciones, read_csv,
+    find_latest_inventario_csv, find_latest_logistica_csvs, find_latest_pagos_proveedores_csvs,
+    find_latest_partidas_compras_csv, find_latest_partidas_ventas_csv,
+    load_cotizaciones, read_csv,
 )
 
 
@@ -40,6 +43,8 @@ COBRANZA_SNAPSHOT_FILENAME = "cobranza_latest.json"
 PAGOS_PROVEEDORES_SNAPSHOT_FILENAME = "pagos_proveedores_latest.json"
 GASTOS_OPERATIVOS_SNAPSHOT_FILENAME = "gastos_operativos_latest.json"
 LOGISTICA_SNAPSHOT_FILENAME         = "logistica_latest.json"
+INVENTARIO_SNAPSHOT_FILENAME        = "inventario_latest.json"
+ALMACEN_SNAPSHOT_FILENAME           = "almacen_latest.json"
 FINANZAS_SNAPSHOT_FILENAME          = "finanzas_latest.json"
 LOCAL_TIMEZONE = ZoneInfo("America/Mexico_City")
 CSV_WAIT_ATTEMPTS = int(os.getenv("RTB_CSV_WAIT_ATTEMPTS", "13200"))  # 220 min × 60 s
@@ -618,6 +623,76 @@ def load_logistica_payload(data_dir: str = "data", dashboard_dir: str = "dashboa
     return build_logistica_dashboard(read_csv(ap_path), read_csv(en_path), read_csv(et_path), seg_rows)
 
 
+def publish_inventario_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    inv_path = find_latest_inventario_csv(data_dir)
+    vta_path = find_latest_partidas_ventas_csv(data_dir)
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    inventario = build_inventario_dashboard(
+        read_csv(inv_path),
+        read_csv(vta_path),
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": {"inventario": inv_path.name, "partidas_ventas": vta_path.name},
+        "dashboard": {"inventario": inventario},
+    }
+    atomic_write_json(Path(dashboard_dir) / INVENTARIO_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_inventario_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / INVENTARIO_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["inventario"]
+    inv_path = find_latest_inventario_csv(data_dir)
+    vta_path = find_latest_partidas_ventas_csv(data_dir)
+    return build_inventario_dashboard(read_csv(inv_path), read_csv(vta_path))
+
+
+def publish_almacen_snapshot(
+    data_dir: str | Path,
+    dashboard_dir: str | Path,
+    fecha_desde: str,
+    fecha_hasta: str,
+) -> dict:
+    cmp_path = find_latest_partidas_compras_csv(data_dir)
+    vta_path = find_latest_partidas_ventas_csv(data_dir)
+    period_label = f"{fecha_desde} a {fecha_hasta}"
+    almacen = build_almacen_dashboard(
+        read_csv(cmp_path),
+        read_csv(vta_path),
+        period_label=period_label,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period": {"start": fecha_desde, "end": fecha_hasta, "label": period_label},
+        "files": {"partidas_compras": cmp_path.name, "partidas_ventas": vta_path.name},
+        "dashboard": {"almacen": almacen},
+    }
+    atomic_write_json(Path(dashboard_dir) / ALMACEN_SNAPSHOT_FILENAME, snapshot)
+    return snapshot
+
+
+def load_almacen_payload(data_dir: str = "data", dashboard_dir: str = "dashboard_data") -> dict:
+    snap = Path(dashboard_dir) / ALMACEN_SNAPSHOT_FILENAME
+    if snap.exists():
+        return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["almacen"]
+    cmp_path = find_latest_partidas_compras_csv(data_dir)
+    vta_path = find_latest_partidas_ventas_csv(data_dir)
+    return build_almacen_dashboard(read_csv(cmp_path), read_csv(vta_path))
+
+
 def publish_finanzas_snapshot(
     data_dir: str | Path,
     dashboard_dir: str | Path,
@@ -1000,7 +1075,7 @@ def render_index() -> str:
       <nav class="module-bar" aria-label="Modulos del dashboard">
         <button class="module-tab active" type="button" data-module="ventas" aria-current="page">Ventas</button>
         <button class="module-tab" type="button" data-module="facturacion">Facturacion</button>
-        <button class="module-tab" type="button" data-module="operacion">Operacion</button>
+        <button class="module-tab" type="button" data-module="operacion">Almacen</button>
         <button class="module-tab" type="button" data-module="compras">Compras</button>
         <button class="module-tab" type="button" data-module="cobranza">Cobranza</button>
         <button class="module-tab" type="button" data-module="pagos_proveedores">Pagos Proveedores</button>
@@ -1747,6 +1822,107 @@ def render_index() -> str:
 
         </section>
 
+        <section id="inventarioPanel" class="logistica-panel" aria-label="Inventario y margen" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="inventarioKpiGrid">
+            <p class="panel-state">Cargando inventario...</p>
+          </div>
+
+          <section class="status-section" id="inventarioStockSection" hidden>
+            <h2 class="section-title">Valor de inventario</h2>
+            <p class="section-subtitle" id="inventarioStockSubtitle">Snapshot mas reciente de Notion.</p>
+            <div id="inventarioStockCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+            <canvas id="inventarioStockChart" style="width:100%;display:block" aria-label="Inventario mensual"></canvas>
+            <div class="chart-tooltip" id="inventarioStockTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="inventarioMargenSection" hidden>
+            <h2 class="section-title">Margen bruto por periodo</h2>
+            <p class="section-subtitle">Venta - costo de compra por partida de factura de venta. Solo partidas en el rango de fechas.</p>
+            <div class="weekly-chart-wrap" style="height:300px;width:100%">
+              <canvas class="weekly-chart" id="inventarioMargenChart" width="760" height="300" aria-label="Venta, costo y margen por periodo" style="width:100%;height:100%;display:block"></canvas>
+              <div class="chart-tooltip" id="inventarioMargenTooltip" hidden></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="inventarioTopSection" hidden>
+            <h2 class="section-title">Top SKUs por margen</h2>
+            <p class="section-subtitle">Productos con mayor y menor margen bruto en el periodo.</p>
+            <canvas id="inventarioTopChart" style="width:100%;display:block" aria-label="Top SKUs por margen"></canvas>
+            <div class="chart-tooltip" id="inventarioTopTooltip" hidden></div>
+            <div style="margin-top:20px">
+              <p style="font-size:12px;font-weight:700;color:#65717e;margin:0 0 6px 0">SKUs con menor margen (riesgo)</p>
+              <div class="table-wrap"><table class="status-table" id="inventarioBottomTable">
+                <thead><tr><th>SKU</th><th>Descripcion</th><th>Ventas</th><th>Costo</th><th>Margen</th><th>% Margen</th></tr></thead>
+                <tbody id="inventarioBottomRows"></tbody>
+              </table></div>
+            </div>
+          </section>
+
+          <section class="status-section" id="inventarioPedidosSection" hidden>
+            <h2 class="section-title">Top pedidos por margen</h2>
+            <p class="section-subtitle">Cotizaciones con mayor margen bruto acumulado en el periodo.</p>
+            <div class="table-wrap"><table class="status-table">
+              <thead><tr><th>Cotizacion</th><th>Partidas</th><th>Venta</th><th>Costo</th><th>Margen</th><th>% Margen</th></tr></thead>
+              <tbody id="inventarioPedidosRows"></tbody>
+            </table></div>
+          </section>
+
+        </section>
+
+        <section id="operacionPanel" class="logistica-panel" aria-label="Almacen y surtido" hidden>
+          <div class="kpi-grid cobranza-kpi-grid" id="almacenKpiGrid">
+            <p class="panel-state">Cargando almacen...</p>
+          </div>
+
+          <section class="status-section" id="almacenSurtidoSection" hidden>
+            <h2 class="section-title">Estado de surtido</h2>
+            <p class="section-subtitle">Partidas de facturas de venta por estado de picking en el periodo.</p>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Estado</th><th>Partidas</th><th>% qty</th><th>Monto</th></tr></thead>
+                  <tbody id="almacenSurtidoRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="almacenSurtidoPie" width="520" height="520" aria-label="Estado de surtido"></canvas>
+                  <div class="pie-center" id="almacenSurtidoPieCenter"><strong>100%</strong><span>Partidas</span></div>
+                </div>
+                <div class="chart-tooltip" id="almacenSurtidoTooltip" hidden></div>
+                <div class="pie-legend" id="almacenSurtidoLegend"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-section" id="almacenFaltantesSection" hidden>
+            <h2 class="section-title">Partidas con material faltante</h2>
+            <p class="section-subtitle">SKUs que no pudieron surtirse por falta de stock.</p>
+            <div class="table-wrap"><table class="status-table">
+              <thead><tr><th>SKU</th><th>Descripcion</th><th>Cotizacion</th><th>Cant. solicitada</th><th>Faltante</th><th>Monto</th></tr></thead>
+              <tbody id="almacenFaltantesRows"></tbody>
+            </table></div>
+          </section>
+
+          <section class="status-section" id="almacenRecepcionSection" hidden>
+            <h2 class="section-title">Recepcion de compras</h2>
+            <p class="section-subtitle">Fill rate de partidas de facturas de compras recibidas en el periodo.</p>
+            <div id="almacenRecepcionCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+            <canvas id="almacenFillChart" style="width:100%;display:block" aria-label="Fill rate por factura de compra"></canvas>
+            <div class="chart-tooltip" id="almacenFillTooltip" hidden></div>
+          </section>
+
+          <section class="status-section" id="almacenPendientesSection" hidden>
+            <h2 class="section-title">Partidas pendientes de recepcion</h2>
+            <p class="section-subtitle">Partidas de compra sin cantidad llegada registrada.</p>
+            <div class="table-wrap"><table class="status-table">
+              <thead><tr><th>SKU</th><th>Fact. compra</th><th>Cant. solicitada</th><th>Validado</th></tr></thead>
+              <tbody id="almacenPendientesRows"></tbody>
+            </table></div>
+          </section>
+
+        </section>
+
       </div>
     </section>
   </main>
@@ -1831,6 +2007,8 @@ def render_index() -> str:
     const pagosProveedoresPanel = document.querySelector('#pagos_proveedoresPanel');
     const gastosOperativosPanel = document.querySelector('#gastos_operativosPanel');
     const logisticaPanel = document.querySelector('#logisticaPanel');
+    const inventarioPanel = document.querySelector('#inventarioPanel');
+    const operacionPanel = document.querySelector('#operacionPanel');
     const finanzasPanel = document.querySelector('#finanzasPanel');
     const cobranzaKpiGrid = document.querySelector('#cobranzaKpiGrid');
     const cobranzaHealthStrip = document.querySelector('#cobranzaHealthStrip');
@@ -1934,6 +2112,8 @@ def render_index() -> str:
     let gastosCategoriaChart = { slices: [], activeIndex: null };
     let gastosFiscalGroupedState = {};
     let gastosTemporalTableDraw = null;
+    let inventarioLoaded = false;
+    let almacenLoaded = false;
     let finanzasLoaded = false;
     let finanzasDevGroupedState = {};
     let finanzasCajaGroupedState = {};
@@ -6534,6 +6714,367 @@ def render_index() -> str:
       }
     }
 
+    // ── Inventario ────────────────────────────────────────────────────────────
+
+    function renderInventario(body) {
+      const kpis = body.kpis || {};
+      const pctInmov = kpis.pct_inmov != null ? (kpis.pct_inmov * 100).toFixed(1) + '%' : '—';
+      const pctMrg   = kpis.pct_margen != null ? (kpis.pct_margen * 100).toFixed(1) + '%' : '—';
+      const cards = [];
+      const inmovClass = (kpis.pct_inmov || 0) > 0.30 ? 'warning' : 'primary';
+      cards.push(`<article class="kpi-card primary"><h2>Inventario total</h2>${metric(kpis.inv_nombre || 'Ultimo snapshot', formatMoney(kpis.inv_total), 'Valor total en bodega')}${metric('Activo (con movimiento)', formatMoney(kpis.inv_activo), 'Total - sin movimiento')}</article>`);
+      cards.push(`<article class="kpi-card ${inmovClass}"><h2>Inmovilizado</h2>${metric('Sin movimiento', formatMoney(kpis.inv_sin_mov), '% del total')}${metric('% Inmovilizado', pctInmov, 'Alerta si > 30%')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Margen bruto (periodo)</h2>${metric('Venta (subtotal)', formatMoney(kpis.venta_total), 'Partidas en el rango')}<div class="kpi-pair">${metric('Costo compra', formatMoney(kpis.costo_total), 'Costo x cantidad')}${metric('Margen (' + pctMrg + ')', formatMoney(kpis.margen_total), 'Venta - costo')}</div></article>`);
+      if (kpis.n_sin_costo || kpis.n_margen_neg) {
+        const alertItems = [];
+        if (kpis.n_sin_costo) alertItems.push(`${kpis.n_sin_costo} partidas sin costo`);
+        if (kpis.n_margen_neg) alertItems.push(`${kpis.n_margen_neg} con margen negativo`);
+        cards.push(`<article class="kpi-card warning"><h2>Calidad de datos</h2>${metric('Alertas de margen', alertItems.join(', '), 'Revisar captura en Notion')}</article>`);
+      }
+      const kpiGrid = document.querySelector('#inventarioKpiGrid');
+      if (kpiGrid) { kpiGrid.innerHTML = cards.join(''); attachKpiCanvases(); }
+
+      // Seccion stock
+      const stockSec = document.querySelector('#inventarioStockSection');
+      const stockSub = document.querySelector('#inventarioStockSubtitle');
+      if (stockSec) {
+        stockSec.hidden = false;
+        if (stockSub && kpis.inv_nombre) stockSub.textContent = 'Ultimo snapshot: ' + kpis.inv_nombre;
+        const seriesInv = body.series?.inventario_mensual || [];
+        if (seriesInv.length) {
+          const maxVal = Math.max(...seriesInv.map(d => d.total || 0));
+          const items = seriesInv.map(d => ({
+            tipo: d.key,
+            m:    d.total || 0,
+            sm:   d.sin_mov || 0,
+          }));
+          renderHBarCanvas(
+            document.querySelector('#inventarioStockChart'),
+            document.querySelector('#inventarioStockTooltip'),
+            items,
+            { barField: 'm', labelField: 'tipo', color: '#276f86',
+              valueFmt: (v) => formatMoney(v),
+              tooltipFn: (d) => `<strong>${escapeHtml(d.tipo)}</strong><br>Total: ${formatMoney(d.m)}<br>Sin mov.: ${formatMoney(d.sm)}` }
+          );
+        }
+      }
+
+      // Seccion margen temporal
+      const margenSec = document.querySelector('#inventarioMargenSection');
+      if (margenSec) {
+        const temporal = body.series?.temporal_margen;
+        if (temporal && (temporal.periodos || []).length) {
+          margenSec.hidden = false;
+          const periodos = temporal.periodos || [];
+          const canvas2 = document.querySelector('#inventarioMargenChart');
+          const tooltip2 = document.querySelector('#inventarioMargenTooltip');
+          if (canvas2 && periodos.length) {
+            const labels = periodos.map(p => p.key || '');
+            const venta  = periodos.map(p => p.venta  || 0);
+            const costo  = periodos.map(p => p.costo  || 0);
+            const margen = periodos.map(p => p.margen || 0);
+            const maxY   = Math.max(...venta) * 1.12 || 1;
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const W = canvas2.parentElement.offsetWidth || 760;
+            const H = 300;
+            canvas2.width  = W * dpr;
+            canvas2.height = H * dpr;
+            canvas2.style.width  = W + 'px';
+            canvas2.style.height = H + 'px';
+            const ctx = canvas2.getContext('2d');
+            ctx.scale(dpr, dpr);
+            ctx.clearRect(0, 0, W, H);
+            const PAD = {t:16, r:16, b:36, l:72};
+            const cw = W - PAD.l - PAD.r;
+            const ch = H - PAD.t - PAD.b;
+            const n = labels.length;
+            const x = (i) => PAD.l + (i + 0.5) * (cw / n);
+            const y = (v) => PAD.t + ch - (v / maxY) * ch;
+            // gridlines
+            ctx.strokeStyle = '#e4ecf0'; ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+              const yy = PAD.t + (ch / 4) * i;
+              ctx.beginPath(); ctx.moveTo(PAD.l, yy); ctx.lineTo(PAD.l + cw, yy); ctx.stroke();
+            }
+            const drawLine = (vals, color, alpha) => {
+              ctx.save(); ctx.globalAlpha = alpha;
+              ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+              ctx.beginPath();
+              vals.forEach((v, i) => i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)));
+              ctx.stroke(); ctx.restore();
+            };
+            drawLine(venta,  '#276f86', 1);
+            drawLine(costo,  '#d96058', 0.75);
+            drawLine(margen, '#d0b56b', 1);
+            // labels eje X
+            ctx.fillStyle = '#65717e'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+            labels.forEach((l, i) => ctx.fillText(l, x(i), H - 6));
+            // leyenda
+            const colors = [['#276f86','Venta'],['#d96058','Costo'],['#d0b56b','Margen']];
+            colors.forEach(([c, name], i) => {
+              const lx = PAD.l + i * 90;
+              ctx.fillStyle = c; ctx.fillRect(lx, 4, 12, 8);
+              ctx.fillStyle = '#1b2a32'; ctx.textAlign = 'left';
+              ctx.fillText(name, lx + 16, 13);
+            });
+          }
+        }
+      }
+
+      // Seccion top margen (HBar)
+      const topSec = document.querySelector('#inventarioTopSection');
+      if (topSec) {
+        const topM = body.tables?.top_margen || [];
+        if (topM.length) {
+          topSec.hidden = false;
+          renderHBarCanvas(
+            document.querySelector('#inventarioTopChart'),
+            document.querySelector('#inventarioTopTooltip'),
+            topM,
+            { barField: 'margen', labelField: 'sku', color: '#276f86',
+              valueFmt: (v) => formatMoney(v),
+              tooltipFn: (d) => `<strong>${escapeHtml(d.sku)}</strong><br>${escapeHtml(d.descripcion || '')}<br>Margen: ${formatMoney(d.margen)}<br>Pct: ${((d.pct||0)*100).toFixed(1)}%` }
+          );
+          const bottomM = body.tables?.bottom_margen || [];
+          const tbRows = document.querySelector('#inventarioBottomRows');
+          if (tbRows) {
+            tbRows.innerHTML = bottomM.map(d => `<tr>
+              <td>${escapeHtml(d.sku)}</td>
+              <td>${escapeHtml(d.descripcion || '')}</td>
+              <td>${formatMoney(d.venta)}</td>
+              <td>${formatMoney(d.costo)}</td>
+              <td class="${d.margen < 0 ? 'risk-badge' : ''}">${formatMoney(d.margen)}</td>
+              <td>${((d.pct||0)*100).toFixed(1)}%</td>
+            </tr>`).join('');
+          }
+        }
+      }
+
+      // Seccion top pedidos
+      const pedSec = document.querySelector('#inventarioPedidosSection');
+      if (pedSec) {
+        const topP = body.tables?.top_pedidos_margen || [];
+        if (topP.length) {
+          pedSec.hidden = false;
+          const tbP = document.querySelector('#inventarioPedidosRows');
+          if (tbP) {
+            tbP.innerHTML = topP.map(d => `<tr>
+              <td>${escapeHtml(d.cotizacion)}</td>
+              <td>${d.n}</td>
+              <td>${formatMoney(d.venta)}</td>
+              <td>${formatMoney(d.costo)}</td>
+              <td>${formatMoney(d.margen)}</td>
+              <td>${((d.pct||0)*100).toFixed(1)}%</td>
+            </tr>`).join('');
+          }
+        }
+      }
+    }
+
+    async function loadInventario() {
+      if (inventarioLoaded) return;
+      const kpiGrid = document.querySelector('#inventarioKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/inventario');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de inventario.');
+        renderInventario(body);
+        inventarioLoaded = true;
+      } catch (error) {
+        if (kpiGrid) kpiGrid.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    // ── Almacen ───────────────────────────────────────────────────────────────
+
+    let almacenSurtidoPieSlices = [];
+    let almacenSurtidoActiveIndex = null;
+
+    function renderAlmacenSurtidoPie(seriesSurtido, activeIdx = null) {
+      const pie = document.querySelector('#almacenSurtidoPie');
+      const center = document.querySelector('#almacenSurtidoPieCenter');
+      const legend = document.querySelector('#almacenSurtidoLegend');
+      if (!pie || !seriesSurtido || !seriesSurtido.length) return;
+      const total = seriesSurtido.reduce((s, d) => s + (d.n || 0), 0);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const SIZE = 520;
+      pie.width = SIZE * dpr; pie.height = SIZE * dpr;
+      const ctx = pie.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      const cx = SIZE / 2, cy = SIZE / 2, r = SIZE * 0.38, r2 = SIZE * 0.23;
+      let startAngle = -Math.PI / 2;
+      almacenSurtidoPieSlices = [];
+      seriesSurtido.forEach((d, i) => {
+        const pct = total ? (d.n || 0) / total : 0;
+        const sweep = pct * 2 * Math.PI;
+        const isActive = activeIdx === i;
+        ctx.save();
+        if (isActive) {
+          const mid = startAngle + sweep / 2;
+          ctx.translate(Math.cos(mid) * 6, Math.sin(mid) * 6);
+        }
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, startAngle, startAngle + sweep);
+        ctx.closePath();
+        ctx.fillStyle = d.color || '#276f86';
+        ctx.globalAlpha = isActive ? 1 : (activeIdx != null ? 0.55 : 1);
+        ctx.fill();
+        ctx.restore();
+        almacenSurtidoPieSlices.push({ start: startAngle, end: startAngle + sweep, cx, cy, r, r2, data: d, index: i });
+        startAngle += sweep;
+      });
+      // dona
+      ctx.save(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(cx, cy, r2, 0, 2 * Math.PI);
+      ctx.fillStyle = '#f4f8f9'; ctx.fill(); ctx.restore();
+      const active = activeIdx != null ? seriesSurtido[activeIdx] : null;
+      if (center) {
+        center.querySelector('strong').textContent = active
+          ? ((total ? (active.n / total) * 100 : 0).toFixed(0) + '%')
+          : '100%';
+        center.querySelector('span').textContent = active ? active.estado : 'Partidas';
+      }
+      if (legend) {
+        legend.innerHTML = seriesSurtido.map((d, i) => {
+          const pct2 = total ? ((d.n || 0) / total * 100).toFixed(0) : 0;
+          return `<button class="legend-item${activeIdx === i ? ' active' : ''}" data-idx="${i}" style="--dot-color:${d.color}">
+            <span class="status-dot" style="background:${d.color}"></span>
+            <span class="status-name">${escapeHtml(d.estado)}</span>
+            <span class="legend-pct">${pct2}%</span>
+            <span class="legend-val">${formatMoney(d.monto)}</span>
+          </button>`;
+        }).join('');
+        legend.querySelectorAll('.legend-item').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = +btn.dataset.idx;
+            almacenSurtidoActiveIndex = almacenSurtidoActiveIndex === idx ? null : idx;
+            renderAlmacenSurtidoPie(seriesSurtido, almacenSurtidoActiveIndex);
+            const rows = document.querySelectorAll('#almacenSurtidoRows tr');
+            rows.forEach((tr, ri) => tr.classList.toggle('row-active', almacenSurtidoActiveIndex === ri));
+          });
+        });
+      }
+    }
+
+    function renderAlmacen(body) {
+      const kpis = body.kpis || {};
+      const pctEmp = kpis.pct_empacado != null ? (kpis.pct_empacado * 100).toFixed(1) + '%' : '—';
+      const pctVal = kpis.pct_validado != null ? (kpis.pct_validado * 100).toFixed(1) + '%' : '—';
+      const fillRate = kpis.fill_rate != null ? (kpis.fill_rate * 100).toFixed(1) + '%' : '—';
+      const empClass = (kpis.pct_empacado || 0) >= 0.8 ? 'primary' : 'warning';
+      const cards = [];
+      cards.push(`<article class="kpi-card ${empClass}"><h2>Surtido de ventas</h2><div class="kpi-pair">${metric('Empacado (' + pctEmp + ')', formatNumber(kpis.n_empacado), 'Listo para envio')}${metric('Pendiente', formatNumber(kpis.n_pendiente), 'En proceso')}</div>${metric('Faltante', formatNumber(kpis.n_faltante) + ' partidas / ' + formatMoney(kpis.sub_faltante), 'Sin stock disponible')}</article>`);
+      cards.push(`<article class="kpi-card primary"><h2>Recepcion de compras</h2><div class="kpi-pair">${metric('Fill rate', fillRate, 'Cant. llegada / solicitada')}${metric('Pendientes', formatNumber(kpis.n_pendientes_rcep), 'Sin cantidad llegada')}</div>${metric('Completos / Parciales', formatNumber(kpis.n_completos_rcep) + ' / ' + formatNumber(kpis.n_parciales_rcep), 'Partidas totalmente / parcialmente recibidas')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>Validacion fisica</h2>${metric('Validadas', formatNumber(kpis.n_validadas) + ' de ' + formatNumber(kpis.n_partidas_cmp), 'Partidas fisicamente contadas')}${metric('% Validado', pctVal, 'Alerta si < 50%')}</article>`);
+      const kpiGrid = document.querySelector('#almacenKpiGrid');
+      if (kpiGrid) { kpiGrid.innerHTML = cards.join(''); attachKpiCanvases(); }
+
+      // Seccion surtido (dona)
+      const surtSec = document.querySelector('#almacenSurtidoSection');
+      if (surtSec) {
+        surtSec.hidden = false;
+        const seriesSurtido = body.series?.surtido || [];
+        const totalSurt = seriesSurtido.reduce((s, d) => s + (d.n || 0), 0);
+        const surtRows = document.querySelector('#almacenSurtidoRows');
+        if (surtRows) {
+          surtRows.innerHTML = seriesSurtido.map((d, i) => `<tr class="${almacenSurtidoActiveIndex === i ? 'row-active' : ''}" data-idx="${i}">
+            <td><span class="status-dot" style="background:${d.color}"></span> ${escapeHtml(d.estado)}</td>
+            <td>${d.n}</td>
+            <td>${totalSurt ? ((d.n / totalSurt) * 100).toFixed(1) + '%' : '—'}</td>
+            <td>${formatMoney(d.monto)}</td>
+          </tr>`).join('');
+          surtRows.querySelectorAll('tr').forEach(tr => {
+            tr.addEventListener('click', () => {
+              const idx = +tr.dataset.idx;
+              almacenSurtidoActiveIndex = almacenSurtidoActiveIndex === idx ? null : idx;
+              renderAlmacenSurtidoPie(seriesSurtido, almacenSurtidoActiveIndex);
+              surtRows.querySelectorAll('tr').forEach((r, ri) => r.classList.toggle('row-active', almacenSurtidoActiveIndex === ri));
+            });
+          });
+        }
+        renderAlmacenSurtidoPie(seriesSurtido, null);
+      }
+
+      // Seccion faltantes
+      const faltSec = document.querySelector('#almacenFaltantesSection');
+      if (faltSec) {
+        const faltantes = body.tables?.faltantes || [];
+        if (faltantes.length) {
+          faltSec.hidden = false;
+          const fRows = document.querySelector('#almacenFaltantesRows');
+          if (fRows) {
+            fRows.innerHTML = faltantes.map(d => `<tr>
+              <td>${escapeHtml(d.sku)}</td>
+              <td>${escapeHtml(d.descripcion || '')}</td>
+              <td>${escapeHtml(d.cotizacion || '')}</td>
+              <td>${d.cantidad_solicitada}</td>
+              <td>${d.cantidad_faltante}</td>
+              <td>${formatMoney(d.subtotal)}</td>
+            </tr>`).join('');
+          }
+        }
+      }
+
+      // Seccion recepcion (fill rate HBar)
+      const rcepSec = document.querySelector('#almacenRecepcionSection');
+      if (rcepSec) {
+        rcepSec.hidden = false;
+        const rcepCards = document.querySelector('#almacenRecepcionCards');
+        if (rcepCards) {
+          rcepCards.innerHTML = `
+            <article class="tiempos-kpi"><span>${fillRate}</span><small>Fill rate</small></article>
+            <article class="tiempos-kpi"><span>${formatNumber(kpis.sol_total)}</span><small>Cant. solicitada</small></article>
+            <article class="tiempos-kpi"><span>${formatNumber(kpis.lleg_total)}</span><small>Cant. llegada</small></article>
+          `;
+        }
+        const fillPorFc = (body.series?.fill_por_fc || []).slice(0, 20);
+        if (fillPorFc.length) {
+          renderHBarCanvas(
+            document.querySelector('#almacenFillChart'),
+            document.querySelector('#almacenFillTooltip'),
+            fillPorFc,
+            { barField: 'pct', labelField: 'fc_id', color: '#276f86',
+              valueFmt: (v) => (v * 100).toFixed(0) + '%',
+              tooltipFn: (d) => `<strong>FC: ${escapeHtml(d.fc_id)}</strong><br>Fill rate: ${(d.pct*100).toFixed(0)}%<br>Sol: ${d.sol} / Lleg: ${d.lleg}<br>Pdte: ${d.n_pendiente} partidas` }
+          );
+        }
+      }
+
+      // Seccion pendientes recepcion
+      const pdteSec = document.querySelector('#almacenPendientesSection');
+      if (pdteSec) {
+        const pendRcep = body.tables?.pendientes_rcep || [];
+        if (pendRcep.length) {
+          pdteSec.hidden = false;
+          const pRows = document.querySelector('#almacenPendientesRows');
+          if (pRows) {
+            pRows.innerHTML = pendRcep.map(d => `<tr>
+              <td>${escapeHtml(d.sku)}</td>
+              <td>${escapeHtml(d.factura_compra_id || '')}</td>
+              <td>${d.cantidad_solicitada}</td>
+              <td>${d.validada ? 'Si' : 'No'}</td>
+            </tr>`).join('');
+          }
+        }
+      }
+    }
+
+    async function loadAlmacen() {
+      if (almacenLoaded) return;
+      const kpiGrid = document.querySelector('#almacenKpiGrid');
+      try {
+        const response = await fetch('/api/dashboard/almacen');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'No se pudieron cargar los datos de almacen.');
+        renderAlmacen(body);
+        almacenLoaded = true;
+      } catch (error) {
+        if (kpiGrid) kpiGrid.innerHTML = `<p class="panel-state">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
     function setActiveModule(moduleName) {
       // Al salir de Gastos Operativos liberar buffers de canvas (~38MB) y
       // permitir re-render limpio al volver (evita acumulacion de memoria).
@@ -6550,6 +7091,8 @@ def render_index() -> str:
       pagosProveedoresPanel.hidden = moduleName !== 'pagos_proveedores';
       gastosOperativosPanel.hidden = moduleName !== 'gastos_operativos';
       if (logisticaPanel) logisticaPanel.hidden = moduleName !== 'logistica';
+      if (inventarioPanel) inventarioPanel.hidden = moduleName !== 'inventario';
+      if (operacionPanel) operacionPanel.hidden = moduleName !== 'operacion';
       if (finanzasPanel) finanzasPanel.hidden = moduleName !== 'finanzas';
       if (moduleName === 'ventas') loadVentasKpis();
       if (moduleName === 'facturacion') loadFacturacion();
@@ -6558,6 +7101,8 @@ def render_index() -> str:
       if (moduleName === 'pagos_proveedores') loadPagosProveedores();
       if (moduleName === 'gastos_operativos') loadGastosOperativos();
       if (moduleName === 'logistica') loadLogistica();
+      if (moduleName === 'inventario') loadInventario();
+      if (moduleName === 'operacion') loadAlmacen();
       if (moduleName === 'finanzas') loadFinanzas();
     }
 
@@ -6738,6 +7283,24 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/dashboard/inventario")
+    def dashboard_inventario(request: Request) -> dict:
+        try:
+            return load_inventario_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/dashboard/almacen")
+    def dashboard_almacen(request: Request) -> dict:
+        try:
+            return load_almacen_payload(
+                request.app.state.data_dir, request.app.state.dashboard_dir
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/dashboard/finanzas")
     def dashboard_finanzas(request: Request) -> dict:
         try:
@@ -6825,6 +7388,24 @@ def create_app(
                 pass
             try:
                 publish_logistica_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_inventario_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    payload.fecha_desde,
+                    payload.fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_almacen_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     payload.fecha_desde,
@@ -6922,6 +7503,24 @@ def create_app(
                 pass
             try:
                 publish_logistica_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_inventario_snapshot(
+                    request.app.state.data_dir,
+                    request.app.state.dashboard_dir,
+                    fecha_desde,
+                    fecha_hasta,
+                )
+            except FileNotFoundError:
+                pass
+            try:
+                publish_almacen_snapshot(
                     request.app.state.data_dir,
                     request.app.state.dashboard_dir,
                     fecha_desde,

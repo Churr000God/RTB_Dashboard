@@ -1653,6 +1653,40 @@ _RE_PED_ENVIADOS    = re.compile(r"^Pedidos_Enviados_En_El_Periodo_\d{4}-\d{2}-\
 _RE_PED_ENTREGADOS  = re.compile(r"^Pedidos_Entregados_En_El_Periodo_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 _RE_SEG_INCOMPLETOS = re.compile(r"^Segimiento_pedidos_entregados_incompletos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
 
+# ─── Modulo Inventario y Almacen ────────────────────────────────────────────
+_RE_INVENTARIO   = re.compile(r"^Crecimineto_inventario_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_PART_VENTAS  = re.compile(r"^Partidas_facturas_ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+_RE_PART_COMPRAS = re.compile(r"^Partidas_facturas_compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$")
+
+
+def find_latest_inventario_csv(data_dir="data"):
+    p = _find_csv_with_fallback(data_dir, _RE_INVENTARIO, "Crecimineto_inventario_")
+    if p is None:
+        raise FileNotFoundError(
+            f"No se encontro Crecimineto_inventario_*.csv en {data_dir} ni en data_procesada/"
+        )
+    return p
+
+
+def find_latest_partidas_ventas_csv(data_dir="data"):
+    p = _find_csv_with_fallback(data_dir, _RE_PART_VENTAS, "Partidas_facturas_ventas_")
+    if p is None:
+        raise FileNotFoundError(
+            f"No se encontro Partidas_facturas_ventas_*.csv en {data_dir} ni en data_procesada/"
+        )
+    return p
+
+
+def find_latest_partidas_compras_csv(data_dir="data"):
+    p = _find_csv_with_fallback(data_dir, _RE_PART_COMPRAS, "Partidas_facturas_compras_")
+    if p is None:
+        raise FileNotFoundError(
+            f"No se encontro Partidas_facturas_compras_*.csv en {data_dir} ni en data_procesada/"
+        )
+    return p
+
+
+# ─── Modulo Logistica ────────────────────────────────────────────────────────
 def find_latest_logistica_csvs(data_dir="data"):
     """Devuelve (ap, en, et, seg) — ap/en/et obligatorios, seg puede ser None."""
     p_ap  = _find_csv_with_fallback(data_dir, _RE_PED_APROBADOS,   "Pedidos_Aprbados_En_El_Periodo_")
@@ -2388,6 +2422,422 @@ def build_logistica_dashboard(
             "top_clientes":   top_clientes,
             "pedidos_lentos": pedidos_lentos,
             "incompletos":    tabla_incompletos,
+        },
+        "signals": signals,
+    }
+
+
+# ─── Modulo Inventario ───────────────────────────────────────────────────────
+
+def _margen_linea_ventas(row, pfx="Partidas_facturas_ventas_"):
+    """Margen bruto de una fila de partidas ventas.
+
+    subtotal == costo_unitario_v * cantidad_solicitada (100 % verificado).
+    Margen = venta - costo_compra * cantidad.
+    Devuelve (venta, costo_compra, margen).  Costo puede ser 0 (dato faltante).
+    """
+    sol  = f(row.get(pfx + "cantidad_solicitada"))
+    sub  = f(row.get(pfx + "subtotal"))
+    cc   = f(row.get(pfx + "costo_unitario_de_compra_formula"))
+    costo = cc * sol
+    return sub, costo, sub - costo
+
+
+def build_inventario_dashboard(inventario_rows, ventas_rows,
+                               period_label="Periodo actual",
+                               fecha_desde=None, fecha_hasta=None):
+    """Tab Inventario: valor de stock + % inmovilizado + margen bruto por periodo.
+
+    inventario_rows: filas de Crecimineto_inventario_*.csv
+                     tipos: 'Inventario' (total) y 'Productos sin movimiento'.
+    ventas_rows:     filas de Partidas_facturas_ventas_*.csv
+                     Surtido de ventas con costo_unitario_de_compra_formula.
+    """
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d   = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    signals = []
+    PFX = "Crecimineto_inventario_"
+    VFX = "Partidas_facturas_ventas_"
+
+    # ── Inventario snapshot: agrupa por nombre de snapshot (mes) ─────────────
+    snap_por_mes = defaultdict(lambda: {"total": 0.0, "sin_mov": 0.0})
+    for row in inventario_rows:
+        nombre = (row.get(PFX + "name") or "").strip()
+        tipo   = (row.get(PFX + "tipo") or "").strip()
+        monto  = f(row.get(PFX + "monto"))
+        if tipo == "Inventario":
+            snap_por_mes[nombre]["total"] = monto
+        elif tipo == "Productos sin movimiento":
+            snap_por_mes[nombre]["sin_mov"] = monto
+
+    # Snapshot mas reciente (alphabetically por nombre — "Inventario Mayo - 2026" etc.)
+    ultimo_snap = {}
+    if snap_por_mes:
+        ultimo_nombre = sorted(snap_por_mes.keys())[-1]
+        d = snap_por_mes[ultimo_nombre]
+        pct_inmov = d["sin_mov"] / d["total"] if d["total"] else 0.0
+        ultimo_snap = {
+            "nombre":    ultimo_nombre,
+            "total":     d["total"],
+            "sin_mov":   d["sin_mov"],
+            "activo":    d["total"] - d["sin_mov"],
+            "pct_inmov": pct_inmov,
+        }
+
+    # Tendencia mensual de inventario (todos los snapshots)
+    series_inv = sorted([
+        {
+            "key":     nombre,
+            "total":   v["total"],
+            "sin_mov": v["sin_mov"],
+            "activo":  v["total"] - v["sin_mov"],
+        }
+        for nombre, v in snap_por_mes.items()
+    ], key=lambda x: x["key"])
+
+    if ultimo_snap.get("pct_inmov", 0) > 0.30:
+        signals.append(make_signal(
+            "inventario_alto_inmovilizado", "atencion",
+            "Inventario inmovilizado elevado",
+            f"El {ultimo_snap['pct_inmov']*100:.1f}% del inventario no tuvo movimiento en el periodo.",
+            period_label,
+            {"pct_inmov": ultimo_snap["pct_inmov"],
+             "sin_mov": ultimo_snap["sin_mov"],
+             "total": ultimo_snap["total"]},
+            accion="Revisar productos sin movimiento y considerar liquidacion o devolucion.",
+        ))
+
+    # ── Margen bruto: partidas de ventas ─────────────────────────────────────
+    def _norm_vta(row):
+        fecha = parse_date(row.get(VFX + "fecha_de_creaci_n"))
+        sol   = f(row.get(VFX + "cantidad_solicitada"))
+        sub, costo, margen = _margen_linea_ventas(row, VFX)
+        cc    = f(row.get(VFX + "costo_unitario_de_compra_formula"))
+        return {
+            "fecha":       fecha,
+            "sku":         (row.get(VFX + "producto_sku") or "").strip(),
+            "descripcion": (row.get(VFX + "categoria_de_ganancias") or "").strip(),
+            "cotizacion":  (row.get(VFX + "cotizaciones_a_clientes.0") or "").strip(),
+            "estado":      (row.get(VFX + "estado") or "").strip(),
+            "cantidad":    sol,
+            "subtotal":    sub,
+            "costo_cc":    costo,
+            "margen":      margen,
+            "cc_unitario": cc,
+        }
+
+    vtas_norm = [_norm_vta(r) for r in ventas_rows]
+    periodo_vtas = [v for v in vtas_norm if in_period(v["fecha"])]
+
+    venta_total  = sum(v["subtotal"] for v in periodo_vtas)
+    costo_total  = sum(v["costo_cc"] for v in periodo_vtas)
+    margen_total = sum(v["margen"]   for v in periodo_vtas)
+    pct_margen   = margen_total / venta_total if venta_total else 0.0
+
+    # Alertas de calidad de datos
+    sin_costo = [v for v in periodo_vtas if v["cc_unitario"] == 0.0 and v["subtotal"] > 0]
+    margen_neg = [v for v in periodo_vtas if v["margen"] < 0]
+    if sin_costo:
+        skus = sorted(set(v["sku"] for v in sin_costo))
+        signals.append(make_signal(
+            "costo_compra_cero", "atencion",
+            "Partidas sin costo de compra",
+            f"SKU(s) con costo de compra = $0: {', '.join(skus[:5])}. El margen calculado no es confiable.",
+            period_label,
+            {"n": len(sin_costo), "skus": skus},
+            accion="Capturar costo de compra en Notion para estos productos.",
+        ))
+    if margen_neg:
+        skus = sorted(set(v["sku"] for v in margen_neg))
+        signals.append(make_signal(
+            "margen_negativo", "riesgo",
+            "Productos con margen negativo",
+            f"Se vende por debajo del costo de compra: {', '.join(skus[:5])}.",
+            period_label,
+            {"n": len(margen_neg), "monto": sum(abs(v["margen"]) for v in margen_neg), "skus": skus},
+            accion="Revisar precio de venta o costo de compra capturado.",
+        ))
+
+    # Top productos por margen (agrupado por SKU)
+    por_sku = defaultdict(lambda: {"descripcion": "", "venta": 0.0, "costo": 0.0, "margen": 0.0, "n": 0})
+    for v in periodo_vtas:
+        d = por_sku[v["sku"]]
+        if not d["descripcion"]:
+            d["descripcion"] = v["descripcion"]
+        d["venta"]  += v["subtotal"]
+        d["costo"]  += v["costo_cc"]
+        d["margen"] += v["margen"]
+        d["n"]      += 1
+    top_margen = sorted(
+        [{"sku": k, **v, "pct": v["margen"]/v["venta"] if v["venta"] else 0.0} for k, v in por_sku.items()],
+        key=lambda x: -x["margen"]
+    )[:15]
+    bottom_margen = sorted(
+        [{"sku": k, **v, "pct": v["margen"]/v["venta"] if v["venta"] else 0.0} for k, v in por_sku.items()],
+        key=lambda x: x["margen"]
+    )[:10]
+
+    # Top pedidos por margen
+    por_cot = defaultdict(lambda: {"venta": 0.0, "costo": 0.0, "margen": 0.0, "n": 0})
+    for v in periodo_vtas:
+        d = por_cot[v["cotizacion"]]
+        d["venta"]  += v["subtotal"]
+        d["costo"]  += v["costo_cc"]
+        d["margen"] += v["margen"]
+        d["n"]      += 1
+    top_pedidos_margen = sorted(
+        [{"cotizacion": k, **v, "pct": v["margen"]/v["venta"] if v["venta"] else 0.0} for k, v in por_cot.items()],
+        key=lambda x: -x["margen"]
+    )[:15]
+
+    # Serie temporal de margen (por periodo del filtro)
+    temporal_margen = aggregate_temporal(
+        periodo_vtas,
+        date_getter=lambda v: v["fecha"].isoformat() if v["fecha"] else "",
+        metric_getters={
+            "venta":  lambda v: v["subtotal"],
+            "costo":  lambda v: v["costo_cc"],
+            "margen": lambda v: v["margen"],
+        },
+        fecha_desde=fecha_desde, fecha_hasta=fecha_hasta,
+    )
+    periodos = temporal_margen["periodos"]
+    temporal_margen["tendencias"] = {
+        "margen": linear_trend([p["margen"] for p in periodos]),
+        "venta":  linear_trend([p["venta"]  for p in periodos]),
+    }
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "inv_total":      ultimo_snap.get("total", 0.0),
+            "inv_sin_mov":    ultimo_snap.get("sin_mov", 0.0),
+            "inv_activo":     ultimo_snap.get("activo", 0.0),
+            "pct_inmov":      ultimo_snap.get("pct_inmov", 0.0),
+            "inv_nombre":     ultimo_snap.get("nombre", ""),
+            "n_snapshots":    len(snap_por_mes),
+            "venta_total":    venta_total,
+            "costo_total":    costo_total,
+            "margen_total":   margen_total,
+            "pct_margen":     pct_margen,
+            "n_sin_costo":    len(sin_costo),
+            "n_margen_neg":   len(margen_neg),
+            "n_partidas":     len(periodo_vtas),
+            "senales":        len(signals),
+        },
+        "series": {
+            "inventario_mensual": series_inv,
+            "temporal_margen":    temporal_margen,
+        },
+        "tables": {
+            "top_margen":         top_margen,
+            "bottom_margen":      bottom_margen,
+            "top_pedidos_margen": top_pedidos_margen,
+        },
+        "signals": signals,
+    }
+
+
+# ─── Modulo Almacen ──────────────────────────────────────────────────────────
+
+def build_almacen_dashboard(compras_rows, ventas_rows,
+                            period_label="Periodo actual",
+                            fecha_desde=None, fecha_hasta=None):
+    """Tab Almacen: surtido de ventas + recepcion de compras + validacion fisica.
+
+    compras_rows: filas de Partidas_facturas_compras_*.csv
+                  (partida_* cols — recepcion de proveedores).
+    ventas_rows:  filas de Partidas_facturas_ventas_*.csv
+                  (surtido / picking de pedidos de cliente).
+    """
+    _s = parse_date(fecha_desde)
+    _e = parse_date(fecha_hasta)
+    start_d = _s.date() if _s else None
+    end_d   = _e.date() if _e else None
+
+    def in_period(dt):
+        if not dt: return False
+        d = dt.date()
+        return (not start_d or d >= start_d) and (not end_d or d <= end_d)
+
+    signals = []
+    VFX = "Partidas_facturas_ventas_"
+
+    # ── Surtido de ventas ─────────────────────────────────────────────────────
+    def _norm_vta(row):
+        fecha   = parse_date(row.get(VFX + "fecha_de_creaci_n"))
+        sku     = (row.get(VFX + "producto_sku") or "").strip()
+        desc    = (row.get(VFX + "categoria_de_ganancias") or "").strip()
+        estado  = (row.get(VFX + "estado") or "").strip()
+        sol     = f(row.get(VFX + "cantidad_solicitada"))
+        falt    = f(row.get(VFX + "cantidad_faltante"))
+        sub     = f(row.get(VFX + "subtotal"))
+        cot     = (row.get(VFX + "cotizaciones_a_clientes.0") or "").strip()
+        return {
+            "fecha": fecha, "sku": sku, "descripcion": desc,
+            "estado": estado, "cantidad_solicitada": sol,
+            "cantidad_faltante": falt, "subtotal": sub, "cotizacion": cot,
+        }
+
+    vtas_norm = [_norm_vta(r) for r in ventas_rows]
+    periodo_vtas = [v for v in vtas_norm if in_period(v["fecha"])]
+
+    # KPIs de surtido
+    n_total_vta  = len(periodo_vtas)
+    n_empacado   = sum(1 for v in periodo_vtas if v["estado"] == "Empacado")
+    n_pendiente  = sum(1 for v in periodo_vtas if v["estado"] == "Pendiente")
+    n_faltante   = sum(1 for v in periodo_vtas if v["estado"] == "Faltante")
+    sub_empacado = sum(v["subtotal"] for v in periodo_vtas if v["estado"] == "Empacado")
+    sub_pendiente= sum(v["subtotal"] for v in periodo_vtas if v["estado"] == "Pendiente")
+    sub_faltante = sum(v["subtotal"] for v in periodo_vtas if v["estado"] == "Faltante")
+    sub_total_vta= sum(v["subtotal"] for v in periodo_vtas)
+
+    pct_empacado = n_empacado / n_total_vta if n_total_vta else 0.0
+
+    # Series de estado para dona
+    SURTIDO_COLORS = ["#276f86", "#d0b56b", "#d96058"]
+    series_surtido = [
+        {"estado": "Empacado",  "n": n_empacado,  "monto": sub_empacado,  "color": SURTIDO_COLORS[0]},
+        {"estado": "Pendiente", "n": n_pendiente, "monto": sub_pendiente, "color": SURTIDO_COLORS[1]},
+        {"estado": "Faltante",  "n": n_faltante,  "monto": sub_faltante,  "color": SURTIDO_COLORS[2]},
+    ]
+
+    # Tabla de faltantes
+    tabla_faltantes = sorted(
+        [v for v in periodo_vtas if v["cantidad_faltante"] > 0],
+        key=lambda x: -x["subtotal"]
+    )[:30]
+
+    if n_faltante > 0:
+        signals.append(make_signal(
+            "partidas_faltantes", "riesgo",
+            "Partidas con material faltante",
+            f"{n_faltante} partidas no se pudieron surtir por falta de material (${sub_faltante:,.0f}).",
+            period_label,
+            {"n": n_faltante, "monto": sub_faltante},
+            accion="Revisar reposicion de inventario para los SKUs faltantes.",
+        ))
+
+    # Serie temporal de surtido
+    temporal_surtido = aggregate_temporal(
+        periodo_vtas,
+        date_getter=lambda v: v["fecha"].isoformat() if v["fecha"] else "",
+        metric_getters={
+            "n_empacado":  lambda v: 1 if v["estado"] == "Empacado"  else 0,
+            "n_pendiente": lambda v: 1 if v["estado"] == "Pendiente" else 0,
+            "n_faltante":  lambda v: 1 if v["estado"] == "Faltante"  else 0,
+            "monto":       lambda v: v["subtotal"],
+        },
+        fecha_desde=fecha_desde, fecha_hasta=fecha_hasta,
+    )
+
+    # ── Recepcion de compras ──────────────────────────────────────────────────
+    def _norm_cmp(row):
+        fecha    = parse_date(row.get("partida_fecha_creacion"))
+        sku      = (row.get("partida_codigo_producto.0") or "").strip()
+        sol      = f(row.get("partida_cantidad_solicitada"))
+        raw_lleg = (row.get("partida_cantidad_llegada") or "").strip()
+        lleg     = f(raw_lleg) if raw_lleg else None   # None = aun no llego
+        fc_id    = (row.get("partida_cotizacion.0") or "").strip()  # Factura_compra_id
+        valida   = str(row.get("partida_validacion_fisica") or "").strip().upper() == "TRUE"
+        return {
+            "fecha": fecha, "sku": sku, "cantidad_solicitada": sol,
+            "cantidad_llegada": lleg, "factura_compra_id": fc_id, "validada": valida,
+        }
+
+    cmp_norm = [_norm_cmp(r) for r in compras_rows]
+    periodo_cmp = [c for c in cmp_norm if in_period(c["fecha"])]
+
+    sol_total  = sum(c["cantidad_solicitada"] for c in periodo_cmp)
+    cmp_con_llegada = [c for c in periodo_cmp if c["cantidad_llegada"] is not None]
+    lleg_total = sum(c["cantidad_llegada"] for c in cmp_con_llegada)
+    fill_rate  = lleg_total / sol_total if sol_total else 0.0
+
+    n_pendientes_rcep = sum(1 for c in periodo_cmp if c["cantidad_llegada"] is None)
+    n_parciales_rcep  = sum(1 for c in cmp_con_llegada
+                            if c["cantidad_llegada"] < c["cantidad_solicitada"])
+    n_completos_rcep  = sum(1 for c in cmp_con_llegada
+                            if c["cantidad_llegada"] >= c["cantidad_solicitada"])
+
+    # Fill rate por factura de compra
+    por_fc = defaultdict(lambda: {"sol": 0.0, "lleg": 0.0, "n_part": 0, "n_pendiente": 0})
+    for c in periodo_cmp:
+        d = por_fc[c["factura_compra_id"]]
+        d["sol"] += c["cantidad_solicitada"]
+        d["n_part"] += 1
+        if c["cantidad_llegada"] is not None:
+            d["lleg"] += c["cantidad_llegada"]
+        else:
+            d["n_pendiente"] += 1
+    fill_por_fc = sorted(
+        [
+            {"fc_id": k[:8], "sol": v["sol"], "lleg": v["lleg"],
+             "n_part": v["n_part"], "n_pendiente": v["n_pendiente"],
+             "pct": v["lleg"] / v["sol"] if v["sol"] else 0.0}
+            for k, v in por_fc.items()
+        ],
+        key=lambda x: x["pct"]
+    )[:20]
+
+    # Validacion fisica
+    n_validadas = sum(1 for c in periodo_cmp if c["validada"])
+    pct_validado = n_validadas / len(periodo_cmp) if periodo_cmp else 0.0
+
+    if pct_validado < 0.5 and len(periodo_cmp) >= 5:
+        signals.append(make_signal(
+            "validacion_fisica_baja", "atencion",
+            "Validacion fisica pendiente",
+            f"Solo el {pct_validado*100:.1f}% de partidas recibidas han sido validadas fisicamente ({n_validadas}/{len(periodo_cmp)}).",
+            period_label,
+            {"pct_validado": pct_validado, "n_validadas": n_validadas, "n_total": len(periodo_cmp)},
+            accion="Revisar proceso de validacion fisica en almacen.",
+        ))
+
+    # Partidas pendientes de recepcion (sin llegada)
+    tabla_pendientes_rcep = sorted(
+        [c for c in periodo_cmp if c["cantidad_llegada"] is None],
+        key=lambda x: -x["cantidad_solicitada"]
+    )[:20]
+
+    return {
+        "periodo": period_label,
+        "kpis": {
+            "n_partidas_vta":   n_total_vta,
+            "n_empacado":       n_empacado,
+            "n_pendiente":      n_pendiente,
+            "n_faltante":       n_faltante,
+            "sub_empacado":     sub_empacado,
+            "sub_pendiente":    sub_pendiente,
+            "sub_faltante":     sub_faltante,
+            "sub_total_vta":    sub_total_vta,
+            "pct_empacado":     pct_empacado,
+            "sol_total":        sol_total,
+            "lleg_total":       lleg_total,
+            "fill_rate":        fill_rate,
+            "n_pendientes_rcep":n_pendientes_rcep,
+            "n_parciales_rcep": n_parciales_rcep,
+            "n_completos_rcep": n_completos_rcep,
+            "n_validadas":      n_validadas,
+            "pct_validado":     pct_validado,
+            "n_partidas_cmp":   len(periodo_cmp),
+            "senales":          len(signals),
+        },
+        "series": {
+            "surtido":    series_surtido,
+            "temporal":   temporal_surtido,
+            "fill_por_fc": fill_por_fc,
+        },
+        "tables": {
+            "faltantes":          tabla_faltantes,
+            "pendientes_rcep":    tabla_pendientes_rcep,
         },
         "signals": signals,
     }

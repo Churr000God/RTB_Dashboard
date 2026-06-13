@@ -110,6 +110,28 @@ GET /api/dashboard/*  →  sirve el JSON
 - Snapshot: `dashboard_data/gastos_operativos_latest.json`
 - Endpoint: `GET /api/dashboard/gastos_operativos`
 
+### Inventario (9º tab — stock + margen bruto)
+- `Crecimineto_inventario_YYYY-MM-DD_HH-MM.csv` *(typo "Crecimineto")* — snapshots de valor de inventario. Regex: `^Crecimineto_inventario_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- `Partidas_facturas_ventas_YYYY-MM-DD_HH-MM.csv` — partidas de facturas de venta (surtido + margen). Regex: `^Partidas_facturas_ventas_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- Seleccion: `find_latest_inventario_csv(data_dir)`, `find_latest_partidas_ventas_csv(data_dir)` en `rtb_analisis.py`
+- Funcion: `build_inventario_dashboard(inventario_rows, ventas_rows, period_label, fecha_desde, fecha_hasta)`
+- Snapshot: `dashboard_data/inventario_latest.json`
+- Endpoint: `GET /api/dashboard/inventario`
+- **Margen bruto** = `subtotal − costo_unitario_de_compra_formula × cantidad_solicitada` por partida. `subtotal = costo_unitario_v × cantidad_solicitada` (100% verificado).
+- **Inventario snapshot**: filas con `tipo ∈ {Inventario, Productos sin movimiento}` agrupadas por `name` (ej. "Inventario Mayo - 2026"). Snapshot mas reciente = alphabetically last `name`.
+- NO entra al consolidado Finanzas (el valor de ventas ya esta en Cobranza/Facturacion).
+
+### Almacen (tab "Almacen" — reutiliza placeholder "Operacion", 3er tab visible)
+- `Partidas_facturas_ventas_*.csv` — mismo CSV que Inventario (surtido/picking, campo `estado ∈ {Empacado, Pendiente, Faltante}`).
+- `Partidas_facturas_compras_YYYY-MM-DD_HH-MM.csv` — partidas de facturas de compra (recepcion de proveedores). Regex: `^Partidas_facturas_compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
+- Seleccion: `find_latest_partidas_compras_csv(data_dir)` en `rtb_analisis.py`
+- Funcion: `build_almacen_dashboard(compras_rows, ventas_rows, period_label, fecha_desde, fecha_hasta)`
+- Snapshot: `dashboard_data/almacen_latest.json`
+- Endpoint: `GET /api/dashboard/almacen`
+- **Fill rate** = `cantidad_llegada / cantidad_solicitada` — `cantidad_llegada` vacio (string "") = pendiente (None).
+- **Validacion fisica**: `partida_validacion_fisica` es string `"TRUE"` / `"FALSE"`.
+- Columnas del CSV compras tienen prefijo `partida_` (sin prefijo timestamp; no cambiar).
+
 ### Finanzas (consolidado — 7º tab, independiente de Logística)
 - **No lee CSVs**: `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (consolidador puro).
 - **Dos lentes**:
@@ -254,9 +276,11 @@ python -m unittest tests/test_pagos_proveedores_dashboard.py -v        # 23 test
 python -m unittest tests/test_gastos_operativos_dashboard.py -v        # 26 tests (+ 15 de regex/tarjeta/categoría)
 python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 tests
 python -m unittest tests/test_logistica_dashboard.py -v                # 44 tests
-# Suite completa sin FastAPI (247 tests):
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py -v
-# Suite completa incluyendo tests de integración FastAPI (298 tests):
+python -m unittest tests/test_inventario_dashboard.py -v               # 33 tests
+python -m unittest tests/test_almacen_dashboard.py -v                  # 38 tests
+# Suite completa sin FastAPI (318 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py -v
+# Suite completa incluyendo tests de integracion FastAPI (369 tests):
 python -m unittest discover -s tests -v
 ```
 
@@ -302,6 +326,7 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-12 | `renderHBarCanvas` ahora acepta `opts.valueFmt` para formatear el texto de las barras. Antes era `formatMoney` hardcoded. El histograma de ciclo total en Logística usa `valueFmt: (v) => v + ' ped.'`. |
 | 2026-06-12 | IVA estimado en Finanzas: `renderFinanzasIva` reescrito — usa `renderHBarCanvas` (una barra por concepto, valores absolutos) en lugar de `drawGroupedBarChart` con dos series idénticas. Cuando `iva_por_pagar < 0` muestra "Saldo a favor" en teal. El IVA trasladado es base caja (sobre cobros); si no hay cobros en el periodo = $0 es correcto. |
 | 2026-06-12 | `create_app` acepta `sleep: Callable` injectable para tests. `actualizar_datos` pasa `app.state.sleep` a `wait_for_changed_cotizaciones` y `wait_for_changed_facturas`. `levantar_dashboard.sh`: `BASE_URL` configurable via `${RTB_BASE_URL:-http://localhost:8000}`. Suite total: 298 tests. |
+| 2026-06-13 | Nuevos modulos Inventario (tab "Inventario") y Almacen (tab "Almacen", reutiliza placeholder "Operacion"). CSVs: `Crecimineto_inventario_*.csv`, `Partidas_facturas_ventas_*.csv`, `Partidas_facturas_compras_*.csv`. Backend: `build_inventario_dashboard` (stock snapshot + margen bruto por SKU/pedido), `build_almacen_dashboard` (surtido Empacado/Pendiente/Faltante + fill rate recepcion + validacion fisica). Margen = `subtotal - costo_unitario_de_compra_formula * cantidad_solicitada`. `cantidad_llegada` vacio = pendiente (None). Columnas compras con prefijo `partida_` (sin timestamp). Endpoints `/api/dashboard/inventario` y `/api/dashboard/almacen`. Wired en ambos bloques publish (webhook + regenerar-snapshot). Frontend con dona surtido (patron Logistica), HBar fill rate, tablas HTML (no canvas — evita crash SIGILL en grid). 71 tests nuevos (33 + 38). Suite sin FastAPI: 318 tests. |
 | 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
 
 ---
