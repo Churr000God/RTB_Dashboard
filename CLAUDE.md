@@ -125,12 +125,16 @@ GET /api/dashboard/*  →  sirve el JSON
 - `Partidas_facturas_ventas_*.csv` — mismo CSV que Inventario (surtido/picking, campo `estado ∈ {Empacado, Pendiente, Faltante}`).
 - `Partidas_facturas_compras_YYYY-MM-DD_HH-MM.csv` — partidas de facturas de compra (recepcion de proveedores). Regex: `^Partidas_facturas_compras_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.csv$`
 - Seleccion: `find_latest_partidas_compras_csv(data_dir)` en `rtb_analisis.py`
-- Funcion: `build_almacen_dashboard(compras_rows, ventas_rows, period_label, fecha_desde, fecha_hasta)`
+- Funcion: `build_almacen_dashboard(compras_rows, ventas_rows, period_label, fecha_desde, fecha_hasta, cotizaciones=None, facturas_compras=None)`
 - Snapshot: `dashboard_data/almacen_latest.json`
 - Endpoint: `GET /api/dashboard/almacen`
 - **Fill rate** = `cantidad_llegada / cantidad_solicitada` — `cantidad_llegada` vacio (string "") = pendiente (None).
 - **Validacion fisica**: `partida_validacion_fisica` es string `"TRUE"` / `"FALSE"`.
 - Columnas del CSV compras tienen prefijo `partida_` (sin prefijo timestamp; no cambiar).
+- **Nombre de cotizacion en faltantes**: `cotizaciones_a_clientes.0` (UUID) se resuelve a `Cotizacion_nombre` via lookup `{Cotizacion_id → Cotizacion_nombre}` del CSV de cotizaciones. Fallback al UUID si no se pasa `cotizaciones`.
+- **Nombre de factura de compra en pendientes**: `partida_cotizacion.0` (UUID que apunta a `Factura_compra_id`) se resuelve a `Factura_compra_nombre` (ej. "PROVEEDOR SA - 42") via lookup del CSV `Facturas_Compras_*.csv`. Helper `_load_facturas_compras_rows(data_dir)` en `rtb_web.py` con fallback a `data_procesada/`.
+- **Estado de surtido** (dona): patron identico a ventas — `renderAlmacenSurtidoChart` / `almacenSurtidoSliceAtEvent` / `setActiveAlmacenSurtido`. Canvas DPR-aware con `getBoundingClientRect` + `setTransform`. Slice activo +8px / opacidad 0.42 inactivos. Filas con `status-name`+`status-dot`+`--status-color`. Leyenda con `.legend-item`+`.legend-swatch`+`data-index`. Interaccion `mousemove`/`mouseleave`.
+- **Recepcion de compras** (dona): `series.recepcion` — 3 estados: `100% recibido` (#57c5b6), `Parcial` (#d0b56b), `Pendiente` (#5b6673). Mismo patron de funciones: `renderAlmacenRecepcionChart` / `almacenRecepcionSliceAtEvent` / `setActiveAlmacenRecepcion`.
 
 ### Finanzas (consolidado — 7º tab, independiente de Logística)
 - **No lee CSVs**: `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (consolidador puro).
@@ -277,8 +281,8 @@ python -m unittest tests/test_gastos_operativos_dashboard.py -v        # 26 test
 python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 tests
 python -m unittest tests/test_logistica_dashboard.py -v                # 44 tests
 python -m unittest tests/test_inventario_dashboard.py -v               # 33 tests
-python -m unittest tests/test_almacen_dashboard.py -v                  # 38 tests
-# Suite completa sin FastAPI (318 tests):
+python -m unittest tests/test_almacen_dashboard.py -v                  # 48 tests
+# Suite completa sin FastAPI (328 tests):
 python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py -v
 # Suite completa incluyendo tests de integracion FastAPI (369 tests):
 python -m unittest discover -s tests -v
@@ -327,6 +331,10 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-12 | IVA estimado en Finanzas: `renderFinanzasIva` reescrito — usa `renderHBarCanvas` (una barra por concepto, valores absolutos) en lugar de `drawGroupedBarChart` con dos series idénticas. Cuando `iva_por_pagar < 0` muestra "Saldo a favor" en teal. El IVA trasladado es base caja (sobre cobros); si no hay cobros en el periodo = $0 es correcto. |
 | 2026-06-12 | `create_app` acepta `sleep: Callable` injectable para tests. `actualizar_datos` pasa `app.state.sleep` a `wait_for_changed_cotizaciones` y `wait_for_changed_facturas`. `levantar_dashboard.sh`: `BASE_URL` configurable via `${RTB_BASE_URL:-http://localhost:8000}`. Suite total: 298 tests. |
 | 2026-06-13 | Nuevos modulos Inventario (tab "Inventario") y Almacen (tab "Almacen", reutiliza placeholder "Operacion"). CSVs: `Crecimineto_inventario_*.csv`, `Partidas_facturas_ventas_*.csv`, `Partidas_facturas_compras_*.csv`. Backend: `build_inventario_dashboard` (stock snapshot + margen bruto por SKU/pedido), `build_almacen_dashboard` (surtido Empacado/Pendiente/Faltante + fill rate recepcion + validacion fisica). Margen = `subtotal - costo_unitario_de_compra_formula * cantidad_solicitada`. `cantidad_llegada` vacio = pendiente (None). Columnas compras con prefijo `partida_` (sin timestamp). Endpoints `/api/dashboard/inventario` y `/api/dashboard/almacen`. Wired en ambos bloques publish (webhook + regenerar-snapshot). Frontend con dona surtido (patron Logistica), HBar fill rate, tablas HTML (no canvas — evita crash SIGILL en grid). 71 tests nuevos (33 + 38). Suite sin FastAPI: 318 tests. |
+| 2026-06-13 | Almacen — Estado de surtido rediseñado con patron identico a ventas: `renderAlmacenSurtidoChart` / `almacenSurtidoSliceAtEvent` / `setActiveAlmacenSurtido`. Canvas DPR-aware (`getBoundingClientRect` + `setTransform`), slice activo +8px, opacidad 0.42 para inactivos, tooltip `placeTooltipNear`, filas con `status-name`+`status-dot`, leyenda con `.legend-item`+`.legend-swatch`+`data-index`, interaccion `mousemove`/`mouseleave`. Columna `% monto` agregada al thead. |
+| 2026-06-13 | Almacen — "Partidas con material faltante": campo `cotizacion` resuelve UUID (`cotizaciones_a_clientes.0`) a `Cotizacion_nombre` via lookup del CSV de cotizaciones pasado como `cotizaciones=` a `build_almacen_dashboard`. Fallback al UUID si no se pasa. |
+| 2026-06-13 | Almacen — "Recepcion de compras" sustituye el HBar de fill rate por dona con patron Estado de surtido. Backend: `series.recepcion` = `[{estado, n, color}]` con 3 estados: `100% recibido` (#57c5b6), `Parcial` (#d0b56b), `Pendiente` (#5b6673). Frontend: `renderAlmacenRecepcionChart` / `almacenRecepcionSliceAtEvent` / `setActiveAlmacenRecepcion`. |
+| 2026-06-13 | Almacen — "Partidas pendientes de recepcion": campo `Fact. compra` resuelve UUID (`partida_cotizacion.0`) a `Factura_compra_nombre` (ej. "PROVEEDOR SA - 42") via lookup del CSV `Facturas_Compras_*.csv`, pasado como `facturas_compras=` a `build_almacen_dashboard`. Helper `_load_facturas_compras_rows(data_dir)` en `rtb_web.py` con fallback a `data_procesada/`. Suite sin FastAPI: 328 tests. |
 | 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
 
 ---

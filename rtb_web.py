@@ -378,6 +378,21 @@ def find_compras_csvs(data_dir: str | Path) -> Path:
     return max(matches, key=lambda p: (p.stat().st_mtime_ns, p.name))
 
 
+def _load_facturas_compras_rows(data_dir: str | Path) -> list[dict]:
+    """Carga Facturas_Compras_*.csv con fallback a data_procesada/."""
+    try:
+        return read_csv(find_compras_csvs(data_dir))
+    except FileNotFoundError:
+        pass
+    procesada = Path("data_procesada")
+    for d in sorted(procesada.glob("*_datos"), reverse=True):
+        try:
+            return read_csv(find_compras_csvs(d))
+        except FileNotFoundError:
+            continue
+    return []
+
+
 def find_anticipos_csv(data_dir: str | Path) -> Path:
     root = Path(data_dir)
     matches = [p for p in root.glob("Facturas_Anticipo_*.csv") if p.is_file()]
@@ -667,12 +682,18 @@ def publish_almacen_snapshot(
     cmp_path = find_latest_partidas_compras_csv(data_dir)
     vta_path = find_latest_partidas_ventas_csv(data_dir)
     period_label = f"{fecha_desde} a {fecha_hasta}"
+    try:
+        cot_rows = load_cotizaciones(data_dir)
+    except FileNotFoundError:
+        cot_rows = []
     almacen = build_almacen_dashboard(
         read_csv(cmp_path),
         read_csv(vta_path),
         period_label=period_label,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
+        cotizaciones=cot_rows,
+        facturas_compras=_load_facturas_compras_rows(data_dir),
     )
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -690,7 +711,15 @@ def load_almacen_payload(data_dir: str = "data", dashboard_dir: str = "dashboard
         return json.loads(snap.read_text(encoding="utf-8"))["dashboard"]["almacen"]
     cmp_path = find_latest_partidas_compras_csv(data_dir)
     vta_path = find_latest_partidas_ventas_csv(data_dir)
-    return build_almacen_dashboard(read_csv(cmp_path), read_csv(vta_path))
+    try:
+        cot_rows = load_cotizaciones(data_dir)
+    except FileNotFoundError:
+        cot_rows = []
+    return build_almacen_dashboard(
+        read_csv(cmp_path), read_csv(vta_path),
+        cotizaciones=cot_rows,
+        facturas_compras=_load_facturas_compras_rows(data_dir),
+    )
 
 
 def publish_finanzas_snapshot(
@@ -1870,7 +1899,7 @@ def render_index() -> str:
         </section>
 
         <section id="operacionPanel" class="logistica-panel" aria-label="Almacen y surtido" hidden>
-          <div class="kpi-grid cobranza-kpi-grid" id="almacenKpiGrid">
+          <div class="kpi-grid" id="almacenKpiGrid">
             <p class="panel-state">Cargando almacen...</p>
           </div>
 
@@ -1880,7 +1909,7 @@ def render_index() -> str:
             <div class="status-layout">
               <div class="table-wrap">
                 <table class="status-table">
-                  <thead><tr><th>Estado</th><th>Partidas</th><th>% qty</th><th>Monto</th></tr></thead>
+                  <thead><tr><th>Estado</th><th>Partidas</th><th>Monto</th><th>% qty</th><th>% monto</th></tr></thead>
                   <tbody id="almacenSurtidoRows"></tbody>
                 </table>
               </div>
@@ -1906,10 +1935,23 @@ def render_index() -> str:
 
           <section class="status-section" id="almacenRecepcionSection" hidden>
             <h2 class="section-title">Recepcion de compras</h2>
-            <p class="section-subtitle">Fill rate de partidas de facturas de compras recibidas en el periodo.</p>
-            <div id="almacenRecepcionCards" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
-            <canvas id="almacenFillChart" style="width:100%;display:block" aria-label="Fill rate por factura de compra"></canvas>
-            <div class="chart-tooltip" id="almacenFillTooltip" hidden></div>
+            <p class="section-subtitle">Partidas de facturas de compra por estado de recepcion en el periodo.</p>
+            <div class="status-layout">
+              <div class="table-wrap">
+                <table class="status-table">
+                  <thead><tr><th>Estado</th><th>Partidas</th><th>% qty</th></tr></thead>
+                  <tbody id="almacenRecepcionRows"></tbody>
+                </table>
+              </div>
+              <div class="pie-panel">
+                <div class="pie-canvas-wrap">
+                  <canvas class="pie-chart" id="almacenRecepcionPie" aria-label="Recepcion de compras"></canvas>
+                  <div class="pie-center" id="almacenRecepcionPieCenter"><strong>100%</strong><span>Partidas</span></div>
+                </div>
+                <div class="chart-tooltip" id="almacenRecepcionTooltip" hidden></div>
+                <div class="pie-legend" id="almacenRecepcionLegend"></div>
+              </div>
+            </div>
           </section>
 
           <section class="status-section" id="almacenPendientesSection" hidden>
@@ -2015,6 +2057,8 @@ def render_index() -> str:
     const pagosProveedoresKpiGrid = document.querySelector('#pagosProveedoresKpiGrid');
     const gastosOperativosKpiGrid = document.querySelector('#gastosOperativosKpiGrid');
     const logisticaKpiGrid = document.querySelector('#logisticaKpiGrid');
+    const inventarioKpiGrid = document.querySelector('#inventarioKpiGrid');
+    const almacenKpiGrid = document.querySelector('#almacenKpiGrid');
     const finanzasKpiGrid = document.querySelector('#finanzasKpiGrid');
     const cobranzaTemporalSection = document.querySelector('#cobranzaTemporalSection');
     const cobranzaTemporalTitle = document.querySelector('#cobranzaTemporalTitle');
@@ -4102,7 +4146,7 @@ def render_index() -> str:
         cancelAnimationFrame(kpiAnimationFrame);
         kpiAnimationFrame = null;
       }
-      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, logisticaKpiGrid, finanzasKpiGrid].filter(Boolean);
+      const grids = [kpiGrid, facturacionKpiGrid, comprasKpiGrid, cobranzaKpiGrid, pagosProveedoresKpiGrid, gastosOperativosKpiGrid, logisticaKpiGrid, inventarioKpiGrid, almacenKpiGrid, finanzasKpiGrid].filter(Boolean);
       const cards = grids.flatMap(g => [...g.querySelectorAll('.kpi-card')]);
       kpiCanvasStates = cards.map((card, index) => {
         let canvas = card.querySelector(':scope > canvas.kpi-bg');
@@ -6887,114 +6931,320 @@ def render_index() -> str:
 
     // ── Almacen ───────────────────────────────────────────────────────────────
 
-    let almacenSurtidoPieSlices = [];
-    let almacenSurtidoActiveIndex = null;
+    const almacenSurtidoPie    = document.querySelector('#almacenSurtidoPie');
+    const almacenSurtidoCenter = document.querySelector('#almacenSurtidoPieCenter');
+    const almacenSurtidoTooltipEl = document.querySelector('#almacenSurtidoTooltip');
+    const almacenSurtidoLegend = document.querySelector('#almacenSurtidoLegend');
+    const almacenSurtidoRows   = document.querySelector('#almacenSurtidoRows');
+    const almacenSurtidoChart  = { slices: [], activeIndex: null };
 
-    function renderAlmacenSurtidoPie(seriesSurtido, activeIdx = null) {
-      const pie = document.querySelector('#almacenSurtidoPie');
-      const center = document.querySelector('#almacenSurtidoPieCenter');
-      const legend = document.querySelector('#almacenSurtidoLegend');
-      if (!pie || !seriesSurtido || !seriesSurtido.length) return;
-      const total = seriesSurtido.reduce((s, d) => s + (d.n || 0), 0);
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const SIZE = 520;
-      pie.width = SIZE * dpr; pie.height = SIZE * dpr;
-      const ctx = pie.getContext('2d');
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, SIZE, SIZE);
-      const cx = SIZE / 2, cy = SIZE / 2, r = SIZE * 0.38, r2 = SIZE * 0.23;
-      let startAngle = -Math.PI / 2;
-      almacenSurtidoPieSlices = [];
-      seriesSurtido.forEach((d, i) => {
-        const pct = total ? (d.n || 0) / total : 0;
-        const sweep = pct * 2 * Math.PI;
-        const isActive = activeIdx === i;
-        ctx.save();
-        if (isActive) {
-          const mid = startAngle + sweep / 2;
-          ctx.translate(Math.cos(mid) * 6, Math.sin(mid) * 6);
-        }
+    function renderAlmacenSurtidoChart(activeIndex = null) {
+      if (!almacenSurtidoPie || !almacenSurtidoChart.slices.length) return;
+      const ctx  = almacenSurtidoPie.getContext('2d');
+      const rect = almacenSurtidoPie.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      almacenSurtidoPie.width  = Math.max(1, Math.round(rect.width  * dpr));
+      almacenSurtidoPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius      = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      almacenSurtidoChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
         ctx.beginPath();
         ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, startAngle, startAngle + sweep);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
         ctx.closePath();
-        ctx.fillStyle = d.color || '#276f86';
-        ctx.globalAlpha = isActive ? 1 : (activeIdx != null ? 0.55 : 1);
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
         ctx.fill();
-        ctx.restore();
-        almacenSurtidoPieSlices.push({ start: startAngle, end: startAngle + sweep, cx, cy, r, r2, data: d, index: i });
-        startAngle += sweep;
+        ctx.globalAlpha = 1;
+        ctx.lineWidth   = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
       });
-      // dona
-      ctx.save(); ctx.globalAlpha = 1;
-      ctx.beginPath(); ctx.arc(cx, cy, r2, 0, 2 * Math.PI);
-      ctx.fillStyle = '#f4f8f9'; ctx.fill(); ctx.restore();
-      const active = activeIdx != null ? seriesSurtido[activeIdx] : null;
-      if (center) {
-        center.querySelector('strong').textContent = active
-          ? ((total ? (active.n / total) * 100 : 0).toFixed(0) + '%')
-          : '100%';
-        center.querySelector('span').textContent = active ? active.estado : 'Partidas';
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle   = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+    }
+
+    function almacenSurtidoSliceAtEvent(event) {
+      if (!almacenSurtidoPie) return null;
+      const rect = almacenSurtidoPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width  / 2;
+      const y = event.clientY - rect.top  - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return almacenSurtidoChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveAlmacenSurtido(index, event) {
+      almacenSurtidoChart.activeIndex = index >= 0 ? index : null;
+      renderAlmacenSurtidoChart(almacenSurtidoChart.activeIndex);
+      if (almacenSurtidoLegend)
+        almacenSurtidoLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === almacenSurtidoChart.activeIndex));
+      if (almacenSurtidoRows)
+        almacenSurtidoRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === almacenSurtidoChart.activeIndex));
+      if (almacenSurtidoChart.activeIndex === null) {
+        if (almacenSurtidoTooltipEl) almacenSurtidoTooltipEl.hidden = true;
+        if (almacenSurtidoCenter) almacenSurtidoCenter.innerHTML = '<strong>100%</strong><span>Partidas</span>';
+        return;
       }
-      if (legend) {
-        legend.innerHTML = seriesSurtido.map((d, i) => {
-          const pct2 = total ? ((d.n || 0) / total * 100).toFixed(0) : 0;
-          return `<button class="legend-item${activeIdx === i ? ' active' : ''}" data-idx="${i}" style="--dot-color:${d.color}">
-            <span class="status-dot" style="background:${d.color}"></span>
-            <span class="status-name">${escapeHtml(d.estado)}</span>
-            <span class="legend-pct">${pct2}%</span>
-            <span class="legend-val">${formatMoney(d.monto)}</span>
-          </button>`;
-        }).join('');
-        legend.querySelectorAll('.legend-item').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const idx = +btn.dataset.idx;
-            almacenSurtidoActiveIndex = almacenSurtidoActiveIndex === idx ? null : idx;
-            renderAlmacenSurtidoPie(seriesSurtido, almacenSurtidoActiveIndex);
-            const rows = document.querySelectorAll('#almacenSurtidoRows tr');
-            rows.forEach((tr, ri) => tr.classList.toggle('row-active', almacenSurtidoActiveIndex === ri));
-          });
-        });
+      const slice = almacenSurtidoChart.slices[almacenSurtidoChart.activeIndex];
+      if (!slice) return;
+      if (almacenSurtidoCenter)
+        almacenSurtidoCenter.innerHTML = `<strong>${formatPercent(slice.qtyPct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
+      if (event && almacenSurtidoTooltipEl) placeTooltipNear(almacenSurtidoTooltipEl, event.clientX, event.clientY);
+      if (almacenSurtidoTooltipEl) {
+        almacenSurtidoTooltipEl.innerHTML = `
+          <b>${escapeHtml(slice.estado)}</b>
+          <div><span>Partidas</span><strong>${formatNumber(slice.qty)}</strong></div>
+          <div><span>Monto</span><strong>${formatMoney(slice.monto)}</strong></div>
+          <div><span>% qty</span><strong>${formatPercent(slice.qtyPct)}</strong></div>
+        `;
+        almacenSurtidoTooltipEl.hidden = false;
       }
+    }
+
+    if (almacenSurtidoPie) {
+      almacenSurtidoPie.addEventListener('mousemove', (event) => {
+        const index = almacenSurtidoSliceAtEvent(event);
+        if (index >= 0) setActiveAlmacenSurtido(index, event);
+        else setActiveAlmacenSurtido(null);
+      });
+      almacenSurtidoPie.addEventListener('mouseleave', () => setActiveAlmacenSurtido(null));
+    }
+    if (almacenSurtidoLegend) {
+      almacenSurtidoLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (!item) return;
+        setActiveAlmacenSurtido(Number(item.dataset.index), event);
+      });
+      almacenSurtidoLegend.addEventListener('mouseleave', () => setActiveAlmacenSurtido(null));
+    }
+    if (almacenSurtidoRows) {
+      almacenSurtidoRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        setActiveAlmacenSurtido(Number(row.dataset.index), event);
+      });
+      almacenSurtidoRows.addEventListener('mouseleave', () => setActiveAlmacenSurtido(null));
+    }
+
+    // ── Almacen — Recepcion dona ──────────────────────────────────────────────
+
+    const almacenRecepcionPie    = document.querySelector('#almacenRecepcionPie');
+    const almacenRecepcionCenter = document.querySelector('#almacenRecepcionPieCenter');
+    const almacenRecepcionTooltipEl = document.querySelector('#almacenRecepcionTooltip');
+    const almacenRecepcionLegend = document.querySelector('#almacenRecepcionLegend');
+    const almacenRecepcionRows   = document.querySelector('#almacenRecepcionRows');
+    const almacenRecepcionChart  = { slices: [], activeIndex: null };
+
+    function renderAlmacenRecepcionChart(activeIndex = null) {
+      if (!almacenRecepcionPie || !almacenRecepcionChart.slices.length) return;
+      const ctx  = almacenRecepcionPie.getContext('2d');
+      const rect = almacenRecepcionPie.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      almacenRecepcionPie.width  = Math.max(1, Math.round(rect.width  * dpr));
+      almacenRecepcionPie.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius      = Math.min(rect.width, rect.height) * 0.43;
+      const innerRadius = radius * 0.58;
+      almacenRecepcionChart.slices.forEach((slice, index) => {
+        const isActive = index === activeIndex;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius + (isActive ? 8 : 0), slice.start, slice.end);
+        ctx.closePath();
+        ctx.fillStyle = slice.color;
+        ctx.globalAlpha = activeIndex === null || isActive ? 1 : 0.42;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth   = isActive ? 4 : 2;
+        ctx.strokeStyle = '#fbfcfd';
+        ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+      ctx.fillStyle   = '#fbfcfd';
+      ctx.fill();
+      ctx.strokeStyle = '#e0e8ee';
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+    }
+
+    function almacenRecepcionSliceAtEvent(event) {
+      if (!almacenRecepcionPie) return null;
+      const rect = almacenRecepcionPie.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width  / 2;
+      const y = event.clientY - rect.top  - rect.height / 2;
+      const distance = Math.hypot(x, y);
+      const outer = Math.min(rect.width, rect.height) * 0.47;
+      const inner = outer * 0.52;
+      if (distance < inner || distance > outer) return null;
+      let angle = Math.atan2(y, x);
+      if (angle < -Math.PI / 2) angle += Math.PI * 2;
+      return almacenRecepcionChart.slices.findIndex((s) => angle >= s.start && angle <= s.end);
+    }
+
+    function setActiveAlmacenRecepcion(index, event) {
+      almacenRecepcionChart.activeIndex = index >= 0 ? index : null;
+      renderAlmacenRecepcionChart(almacenRecepcionChart.activeIndex);
+      if (almacenRecepcionLegend)
+        almacenRecepcionLegend.querySelectorAll('.legend-item').forEach((item, i) => item.classList.toggle('active', i === almacenRecepcionChart.activeIndex));
+      if (almacenRecepcionRows)
+        almacenRecepcionRows.querySelectorAll('tr').forEach((row, i) => row.classList.toggle('active', i === almacenRecepcionChart.activeIndex));
+      if (almacenRecepcionChart.activeIndex === null) {
+        if (almacenRecepcionTooltipEl) almacenRecepcionTooltipEl.hidden = true;
+        if (almacenRecepcionCenter) almacenRecepcionCenter.innerHTML = '<strong>100%</strong><span>Partidas</span>';
+        return;
+      }
+      const slice = almacenRecepcionChart.slices[almacenRecepcionChart.activeIndex];
+      if (!slice) return;
+      if (almacenRecepcionCenter)
+        almacenRecepcionCenter.innerHTML = `<strong>${formatPercent(slice.pct)}</strong><span>${escapeHtml(slice.estado)}</span>`;
+      if (event && almacenRecepcionTooltipEl) placeTooltipNear(almacenRecepcionTooltipEl, event.clientX, event.clientY);
+      if (almacenRecepcionTooltipEl) {
+        almacenRecepcionTooltipEl.innerHTML = `
+          <b>${escapeHtml(slice.estado)}</b>
+          <div><span>Partidas</span><strong>${formatNumber(slice.qty)}</strong></div>
+          <div><span>% qty</span><strong>${formatPercent(slice.pct)}</strong></div>
+        `;
+        almacenRecepcionTooltipEl.hidden = false;
+      }
+    }
+
+    if (almacenRecepcionPie) {
+      almacenRecepcionPie.addEventListener('mousemove', (event) => {
+        const index = almacenRecepcionSliceAtEvent(event);
+        if (index >= 0) setActiveAlmacenRecepcion(index, event);
+        else setActiveAlmacenRecepcion(null);
+      });
+      almacenRecepcionPie.addEventListener('mouseleave', () => setActiveAlmacenRecepcion(null));
+    }
+    if (almacenRecepcionLegend) {
+      almacenRecepcionLegend.addEventListener('mousemove', (event) => {
+        const item = event.target.closest('.legend-item');
+        if (!item) return;
+        setActiveAlmacenRecepcion(Number(item.dataset.index), event);
+      });
+      almacenRecepcionLegend.addEventListener('mouseleave', () => setActiveAlmacenRecepcion(null));
+    }
+    if (almacenRecepcionRows) {
+      almacenRecepcionRows.addEventListener('mousemove', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        setActiveAlmacenRecepcion(Number(row.dataset.index), event);
+      });
+      almacenRecepcionRows.addEventListener('mouseleave', () => setActiveAlmacenRecepcion(null));
     }
 
     function renderAlmacen(body) {
       const kpis = body.kpis || {};
-      const pctEmp = kpis.pct_empacado != null ? (kpis.pct_empacado * 100).toFixed(1) + '%' : '—';
-      const pctVal = kpis.pct_validado != null ? (kpis.pct_validado * 100).toFixed(1) + '%' : '—';
-      const fillRate = kpis.fill_rate != null ? (kpis.fill_rate * 100).toFixed(1) + '%' : '—';
+      const pctEmp  = kpis.pct_empacado != null ? (kpis.pct_empacado * 100).toFixed(1) + '%' : '—';
+      const pctVal  = kpis.pct_validado  != null ? (kpis.pct_validado  * 100).toFixed(1) + '%' : '—';
+      const fillRate = kpis.fill_rate    != null ? (kpis.fill_rate      * 100).toFixed(1) + '%' : '—';
       const empClass = (kpis.pct_empacado || 0) >= 0.8 ? 'primary' : 'warning';
-      const cards = [];
-      cards.push(`<article class="kpi-card ${empClass}"><h2>Surtido de ventas</h2><div class="kpi-pair">${metric('Empacado (' + pctEmp + ')', formatNumber(kpis.n_empacado), 'Listo para envio')}${metric('Pendiente', formatNumber(kpis.n_pendiente), 'En proceso')}</div>${metric('Faltante', formatNumber(kpis.n_faltante) + ' partidas / ' + formatMoney(kpis.sub_faltante), 'Sin stock disponible')}</article>`);
-      cards.push(`<article class="kpi-card primary"><h2>Recepcion de compras</h2><div class="kpi-pair">${metric('Fill rate', fillRate, 'Cant. llegada / solicitada')}${metric('Pendientes', formatNumber(kpis.n_pendientes_rcep), 'Sin cantidad llegada')}</div>${metric('Completos / Parciales', formatNumber(kpis.n_completos_rcep) + ' / ' + formatNumber(kpis.n_parciales_rcep), 'Partidas totalmente / parcialmente recibidas')}</article>`);
-      cards.push(`<article class="kpi-card accent"><h2>Validacion fisica</h2>${metric('Validadas', formatNumber(kpis.n_validadas) + ' de ' + formatNumber(kpis.n_partidas_cmp), 'Partidas fisicamente contadas')}${metric('% Validado', pctVal, 'Alerta si < 50%')}</article>`);
-      const kpiGrid = document.querySelector('#almacenKpiGrid');
-      if (kpiGrid) { kpiGrid.innerHTML = cards.join(''); attachKpiCanvases(); }
+      const valClass = (kpis.pct_validado || 0) >= 0.5 ? 'accent'  : 'warning';
+      const cards = [
+        `
+        <article class="kpi-card ${empClass}">
+          <h2>Surtido de ventas</h2>
+          <div class="kpi-pair">
+            ${metric('Empacado', formatNumber(kpis.n_empacado), pctEmp + ' — listo para envio')}
+            ${metric('Pendiente', formatNumber(kpis.n_pendiente), 'En proceso de picking')}
+          </div>
+          ${metric('Faltante', formatNumber(kpis.n_faltante) + ' partidas', formatMoney(kpis.sub_faltante) + ' sin stock disponible')}
+        </article>`,
+        `
+        <article class="kpi-card primary">
+          <h2>Recepcion de compras</h2>
+          <div class="kpi-pair">
+            ${metric('Fill rate', fillRate, 'Cant. llegada / solicitada')}
+            ${metric('Pendientes', formatNumber(kpis.n_pendientes_rcep), 'Sin cantidad llegada')}
+          </div>
+          ${metric('Completos / Parciales', formatNumber(kpis.n_completos_rcep) + ' / ' + formatNumber(kpis.n_parciales_rcep), 'Partidas totales vs. recibidas parcialmente')}
+        </article>`,
+        `
+        <article class="kpi-card ${valClass}">
+          <h2>Validacion fisica</h2>
+          <div class="kpi-pair">
+            ${metric('Validadas', formatNumber(kpis.n_validadas), 'de ' + formatNumber(kpis.n_partidas_cmp) + ' partidas')}
+            ${metric('% Validado', pctVal, 'Alerta si < 50%')}
+          </div>
+        </article>`,
+      ];
+      if (almacenKpiGrid) { almacenKpiGrid.innerHTML = cards.join(''); attachKpiCanvases(); }
 
       // Seccion surtido (dona)
       const surtSec = document.querySelector('#almacenSurtidoSection');
       if (surtSec) {
         surtSec.hidden = false;
         const seriesSurtido = body.series?.surtido || [];
-        const totalSurt = seriesSurtido.reduce((s, d) => s + (d.n || 0), 0);
-        const surtRows = document.querySelector('#almacenSurtidoRows');
-        if (surtRows) {
-          surtRows.innerHTML = seriesSurtido.map((d, i) => `<tr class="${almacenSurtidoActiveIndex === i ? 'row-active' : ''}" data-idx="${i}">
-            <td><span class="status-dot" style="background:${d.color}"></span> ${escapeHtml(d.estado)}</td>
-            <td>${d.n}</td>
-            <td>${totalSurt ? ((d.n / totalSurt) * 100).toFixed(1) + '%' : '—'}</td>
-            <td>${formatMoney(d.monto)}</td>
-          </tr>`).join('');
-          surtRows.querySelectorAll('tr').forEach(tr => {
-            tr.addEventListener('click', () => {
-              const idx = +tr.dataset.idx;
-              almacenSurtidoActiveIndex = almacenSurtidoActiveIndex === idx ? null : idx;
-              renderAlmacenSurtidoPie(seriesSurtido, almacenSurtidoActiveIndex);
-              surtRows.querySelectorAll('tr').forEach((r, ri) => r.classList.toggle('row-active', almacenSurtidoActiveIndex === ri));
-            });
-          });
+        const totalSurtQty   = seriesSurtido.reduce((s, d) => s + (d.n    || 0), 0);
+        const totalSurtMonto = seriesSurtido.reduce((s, d) => s + (d.monto || 0), 0);
+
+        // Build slices for canvas pie
+        let startAngle = -Math.PI / 2;
+        almacenSurtidoChart.slices = seriesSurtido.map((d, i) => {
+          const qtyPct   = totalSurtQty   ? (d.n    || 0) / totalSurtQty   : 0;
+          const montoPct = totalSurtMonto ? (d.monto || 0) / totalSurtMonto : 0;
+          const sweep    = qtyPct * 2 * Math.PI;
+          const slice    = { start: startAngle, end: startAngle + sweep, color: d.color, estado: d.estado, qty: d.n || 0, monto: d.monto || 0, qtyPct, montoPct };
+          startAngle    += sweep;
+          return slice;
+        });
+
+        // Table rows
+        if (almacenSurtidoRows) {
+          almacenSurtidoRows.innerHTML = seriesSurtido.map((d, i) => {
+            const qtyPct   = totalSurtQty   ? (d.n    || 0) / totalSurtQty   : 0;
+            const montoPct = totalSurtMonto ? (d.monto || 0) / totalSurtMonto : 0;
+            return `<tr data-index="${i}">
+              <td><span class="status-name" style="--status-color:${d.color}"><span class="status-dot"></span>${escapeHtml(d.estado)}</span></td>
+              <td>${formatNumber(d.n)}</td>
+              <td>${formatMoney(d.monto)}</td>
+              <td>${formatPercent(qtyPct)}</td>
+              <td>${formatPercent(montoPct)}</td>
+            </tr>`;
+          }).join('');
         }
-        renderAlmacenSurtidoPie(seriesSurtido, null);
+
+        // Legend
+        if (almacenSurtidoLegend) {
+          almacenSurtidoLegend.innerHTML = seriesSurtido.map((d, i) => {
+            const qtyPct = totalSurtQty ? (d.n || 0) / totalSurtQty : 0;
+            return `<button class="legend-item" type="button" style="--status-color:${d.color}" data-index="${i}">
+              <span class="legend-swatch"></span><span>${escapeHtml(d.estado)}</span><strong>${formatPercent(qtyPct)}</strong>
+            </button>`;
+          }).join('');
+        }
+
+        if (almacenSurtidoCenter) almacenSurtidoCenter.innerHTML = '<strong>100%</strong><span>Partidas</span>';
+        renderAlmacenSurtidoChart(null);
       }
 
       // Seccion faltantes
@@ -7017,29 +7267,47 @@ def render_index() -> str:
         }
       }
 
-      // Seccion recepcion (fill rate HBar)
+      // Seccion recepcion (dona)
       const rcepSec = document.querySelector('#almacenRecepcionSection');
       if (rcepSec) {
         rcepSec.hidden = false;
-        const rcepCards = document.querySelector('#almacenRecepcionCards');
-        if (rcepCards) {
-          rcepCards.innerHTML = `
-            <article class="tiempos-kpi"><span>${fillRate}</span><small>Fill rate</small></article>
-            <article class="tiempos-kpi"><span>${formatNumber(kpis.sol_total)}</span><small>Cant. solicitada</small></article>
-            <article class="tiempos-kpi"><span>${formatNumber(kpis.lleg_total)}</span><small>Cant. llegada</small></article>
-          `;
+        const seriesRcep    = body.series?.recepcion || [];
+        const totalRcepQty  = seriesRcep.reduce((s, d) => s + (d.n || 0), 0);
+
+        // Build slices
+        let rcepAngle = -Math.PI / 2;
+        almacenRecepcionChart.slices = seriesRcep.map((d) => {
+          const pct   = totalRcepQty ? (d.n || 0) / totalRcepQty : 0;
+          const sweep = pct * 2 * Math.PI;
+          const slice = { start: rcepAngle, end: rcepAngle + sweep, color: d.color, estado: d.estado, qty: d.n || 0, pct };
+          rcepAngle  += sweep;
+          return slice;
+        });
+
+        // Table rows
+        if (almacenRecepcionRows) {
+          almacenRecepcionRows.innerHTML = seriesRcep.map((d, i) => {
+            const pct = totalRcepQty ? (d.n || 0) / totalRcepQty : 0;
+            return `<tr data-index="${i}">
+              <td><span class="status-name" style="--status-color:${d.color}"><span class="status-dot"></span>${escapeHtml(d.estado)}</span></td>
+              <td>${formatNumber(d.n)}</td>
+              <td>${formatPercent(pct)}</td>
+            </tr>`;
+          }).join('');
         }
-        const fillPorFc = (body.series?.fill_por_fc || []).slice(0, 20);
-        if (fillPorFc.length) {
-          renderHBarCanvas(
-            document.querySelector('#almacenFillChart'),
-            document.querySelector('#almacenFillTooltip'),
-            fillPorFc,
-            { barField: 'pct', labelField: 'fc_id', color: '#276f86',
-              valueFmt: (v) => (v * 100).toFixed(0) + '%',
-              tooltipFn: (d) => `<strong>FC: ${escapeHtml(d.fc_id)}</strong><br>Fill rate: ${(d.pct*100).toFixed(0)}%<br>Sol: ${d.sol} / Lleg: ${d.lleg}<br>Pdte: ${d.n_pendiente} partidas` }
-          );
+
+        // Legend
+        if (almacenRecepcionLegend) {
+          almacenRecepcionLegend.innerHTML = seriesRcep.map((d, i) => {
+            const pct = totalRcepQty ? (d.n || 0) / totalRcepQty : 0;
+            return `<button class="legend-item" type="button" style="--status-color:${d.color}" data-index="${i}">
+              <span class="legend-swatch"></span><span>${escapeHtml(d.estado)}</span><strong>${formatPercent(pct)}</strong>
+            </button>`;
+          }).join('');
         }
+
+        if (almacenRecepcionCenter) almacenRecepcionCenter.innerHTML = '<strong>100%</strong><span>Partidas</span>';
+        renderAlmacenRecepcionChart(null);
       }
 
       // Seccion pendientes recepcion
@@ -7052,7 +7320,7 @@ def render_index() -> str:
           if (pRows) {
             pRows.innerHTML = pendRcep.map(d => `<tr>
               <td>${escapeHtml(d.sku)}</td>
-              <td>${escapeHtml(d.factura_compra_id || '')}</td>
+              <td>${escapeHtml(d.factura_compra_nombre || d.factura_compra_id || '')}</td>
               <td>${d.cantidad_solicitada}</td>
               <td>${d.validada ? 'Si' : 'No'}</td>
             </tr>`).join('');

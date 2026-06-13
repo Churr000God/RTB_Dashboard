@@ -338,6 +338,80 @@ class TestAlmacenEstructura(unittest.TestCase):
         r = build_almacen_dashboard([_cmp()], vtas, **PERIODO)
         self.assertEqual(len(r["tables"]["faltantes"]), 0)
 
+    def test_faltante_cotizacion_nombre_resuelto(self):
+        # cotizaciones_a_clientes.0 = UUID → debe resolver a Cotizacion_nombre
+        vtas = [_vta(**{VFX + "cantidad_faltante": "3", VFX + "estado": "Faltante",
+                        VFX + "cotizaciones_a_clientes.0": "UUID-COT-123"})]
+        cots = [{"Cotizacion_id": "UUID-COT-123", "Cotizacion_nombre": "RTB-2026-001"}]
+        r = build_almacen_dashboard([_cmp()], vtas, **PERIODO, cotizaciones=cots)
+        self.assertEqual(r["tables"]["faltantes"][0]["cotizacion"], "RTB-2026-001")
+
+    def test_faltante_cotizacion_uuid_fallback(self):
+        # Si no hay cotizaciones pasadas, muestra el UUID tal cual
+        vtas = [_vta(**{VFX + "cantidad_faltante": "3", VFX + "estado": "Faltante",
+                        VFX + "cotizaciones_a_clientes.0": "UUID-COT-123"})]
+        r = build_almacen_dashboard([_cmp()], vtas, **PERIODO)
+        self.assertEqual(r["tables"]["faltantes"][0]["cotizacion"], "UUID-COT-123")
+
+
+class TestAlmacenPendientesNombreFC(unittest.TestCase):
+
+    def _pdte_cmp(self):
+        return _cmp(**{CFX + "cantidad_llegada": ""})
+
+    def test_pendiente_muestra_nombre_fc(self):
+        fc_rows = [{"Factura_compra_id": "uuid-fc-001", "Factura_compra_nombre": "PROVEEDOR SA - 42"}]
+        r = build_almacen_dashboard([self._pdte_cmp()], [_vta()], **PERIODO, facturas_compras=fc_rows)
+        pdte = r["tables"]["pendientes_rcep"]
+        self.assertEqual(len(pdte), 1)
+        self.assertEqual(pdte[0]["factura_compra_nombre"], "PROVEEDOR SA - 42")
+
+    def test_pendiente_uuid_fallback_sin_fc(self):
+        r = build_almacen_dashboard([self._pdte_cmp()], [_vta()], **PERIODO)
+        pdte = r["tables"]["pendientes_rcep"]
+        self.assertEqual(pdte[0]["factura_compra_nombre"], "uuid-fc-001")
+
+    def test_completo_tambien_tiene_nombre(self):
+        fc_rows = [{"Factura_compra_id": "uuid-fc-001", "Factura_compra_nombre": "PROVEEDOR SA - 42"}]
+        r = build_almacen_dashboard([_cmp()], [_vta()], **PERIODO, facturas_compras=fc_rows)
+        # Las partidas completas no aparecen en pendientes pero el campo existe en la normalizacion
+        self.assertEqual(r["tables"]["pendientes_rcep"], [])
+
+
+class TestAlmacenRecepcionSeries(unittest.TestCase):
+
+    def _base_vta(self):
+        return [_vta()]
+
+    def test_series_recepcion_tres_estados(self):
+        r = build_almacen_dashboard([_cmp()], self._base_vta(), **PERIODO)
+        estados = [s["estado"] for s in r["series"]["recepcion"]]
+        self.assertEqual(estados, ["100% recibido", "Parcial", "Pendiente"])
+
+    def test_recepcion_completa_suma(self):
+        # 1 partida con llegada >= solicitada
+        r = build_almacen_dashboard([_cmp()], self._base_vta(), **PERIODO)
+        completos = next(s for s in r["series"]["recepcion"] if s["estado"] == "100% recibido")
+        self.assertEqual(completos["n"], 1)
+
+    def test_recepcion_parcial_suma(self):
+        cmp_parcial = _cmp(**{CFX + "cantidad_llegada": "5", CFX + "cantidad_solicitada": "10"})
+        r = build_almacen_dashboard([cmp_parcial], self._base_vta(), **PERIODO)
+        parciales = next(s for s in r["series"]["recepcion"] if s["estado"] == "Parcial")
+        self.assertEqual(parciales["n"], 1)
+
+    def test_recepcion_pendiente_suma(self):
+        cmp_pdte = _cmp(**{CFX + "cantidad_llegada": ""})
+        r = build_almacen_dashboard([cmp_pdte], self._base_vta(), **PERIODO)
+        pendientes = next(s for s in r["series"]["recepcion"] if s["estado"] == "Pendiente")
+        self.assertEqual(pendientes["n"], 1)
+
+    def test_recepcion_colores_definidos(self):
+        r = build_almacen_dashboard([_cmp()], self._base_vta(), **PERIODO)
+        for s in r["series"]["recepcion"]:
+            self.assertIn("color", s)
+            self.assertTrue(s["color"].startswith("#"))
+
 
 if __name__ == "__main__":
     unittest.main()

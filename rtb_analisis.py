@@ -2650,7 +2650,9 @@ def build_inventario_dashboard(inventario_rows, ventas_rows,
 
 def build_almacen_dashboard(compras_rows, ventas_rows,
                             period_label="Periodo actual",
-                            fecha_desde=None, fecha_hasta=None):
+                            fecha_desde=None, fecha_hasta=None,
+                            cotizaciones=None,
+                            facturas_compras=None):
     """Tab Almacen: surtido de ventas + recepcion de compras + validacion fisica.
 
     compras_rows: filas de Partidas_facturas_compras_*.csv
@@ -2671,6 +2673,24 @@ def build_almacen_dashboard(compras_rows, ventas_rows,
     signals = []
     VFX = "Partidas_facturas_ventas_"
 
+    # Lookup UUID → nombre de cotizacion
+    _cot_nombre = {}
+    if cotizaciones:
+        for r in cotizaciones:
+            cid  = (r.get("Cotizacion_id") or "").strip()
+            nom  = (r.get("Cotizacion_nombre") or "").strip()
+            if cid:
+                _cot_nombre[cid] = nom or cid
+
+    # Lookup UUID → nombre de factura de compra
+    _fc_nombre = {}
+    if facturas_compras:
+        for r in facturas_compras:
+            fid  = (r.get("Factura_compra_id") or "").strip()
+            nom  = (r.get("Factura_compra_nombre") or "").strip()
+            if fid:
+                _fc_nombre[fid] = nom or fid
+
     # ── Surtido de ventas ─────────────────────────────────────────────────────
     def _norm_vta(row):
         fecha   = parse_date(row.get(VFX + "fecha_de_creaci_n"))
@@ -2680,11 +2700,12 @@ def build_almacen_dashboard(compras_rows, ventas_rows,
         sol     = f(row.get(VFX + "cantidad_solicitada"))
         falt    = f(row.get(VFX + "cantidad_faltante"))
         sub     = f(row.get(VFX + "subtotal"))
-        cot     = (row.get(VFX + "cotizaciones_a_clientes.0") or "").strip()
+        cot_id  = (row.get(VFX + "cotizaciones_a_clientes.0") or "").strip()
         return {
             "fecha": fecha, "sku": sku, "descripcion": desc,
             "estado": estado, "cantidad_solicitada": sol,
-            "cantidad_faltante": falt, "subtotal": sub, "cotizacion": cot,
+            "cantidad_faltante": falt, "subtotal": sub,
+            "cotizacion": _cot_nombre.get(cot_id, cot_id),
         }
 
     vtas_norm = [_norm_vta(r) for r in ventas_rows]
@@ -2746,11 +2767,13 @@ def build_almacen_dashboard(compras_rows, ventas_rows,
         sol      = f(row.get("partida_cantidad_solicitada"))
         raw_lleg = (row.get("partida_cantidad_llegada") or "").strip()
         lleg     = f(raw_lleg) if raw_lleg else None   # None = aun no llego
-        fc_id    = (row.get("partida_cotizacion.0") or "").strip()  # Factura_compra_id
+        fc_id    = (row.get("partida_cotizacion.0") or "").strip()  # Factura_compra_id UUID
         valida   = str(row.get("partida_validacion_fisica") or "").strip().upper() == "TRUE"
         return {
             "fecha": fecha, "sku": sku, "cantidad_solicitada": sol,
-            "cantidad_llegada": lleg, "factura_compra_id": fc_id, "validada": valida,
+            "cantidad_llegada": lleg, "validada": valida,
+            "factura_compra_id":     fc_id,
+            "factura_compra_nombre": _fc_nombre.get(fc_id, fc_id),
         }
 
     cmp_norm = [_norm_cmp(r) for r in compras_rows]
@@ -2807,6 +2830,13 @@ def build_almacen_dashboard(compras_rows, ventas_rows,
         key=lambda x: -x["cantidad_solicitada"]
     )[:20]
 
+    RCEP_COLORS = ["#57c5b6", "#d0b56b", "#5b6673"]
+    series_recepcion = [
+        {"estado": "100% recibido", "n": n_completos_rcep,  "color": RCEP_COLORS[0]},
+        {"estado": "Parcial",       "n": n_parciales_rcep,  "color": RCEP_COLORS[1]},
+        {"estado": "Pendiente",     "n": n_pendientes_rcep, "color": RCEP_COLORS[2]},
+    ]
+
     return {
         "periodo": period_label,
         "kpis": {
@@ -2831,9 +2861,10 @@ def build_almacen_dashboard(compras_rows, ventas_rows,
             "senales":          len(signals),
         },
         "series": {
-            "surtido":    series_surtido,
-            "temporal":   temporal_surtido,
-            "fill_por_fc": fill_por_fc,
+            "surtido":      series_surtido,
+            "recepcion":    series_recepcion,
+            "temporal":     temporal_surtido,
+            "fill_por_fc":  fill_por_fc,
         },
         "tables": {
             "faltantes":          tabla_faltantes,
