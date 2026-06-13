@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE="dashboard-rtb"
-BASE_URL="http://localhost:8000"
+BASE_URL="${RTB_BASE_URL:-http://localhost:8000}"
 MAX_ATTEMPTS=30
 TMP_JSON=""
 TMP_FACTURACION_JSON=""

@@ -228,6 +228,11 @@ Comparar fechas siempre con `.date()` para ignorar hora (evita corte de registro
 | `_find_csv_with_fallback` devuelve CSV de otro módulo | El glob prefix no es suficientemente específico si hay archivos con nombres similares | El regex es el filtro real; el prefix solo acelera el glob |
 | Canvas muestra `For&#225;neo` o `Aprob.&#8594;Envio` en lugar del texto real | Entidades HTML numéricas en `ctx.fillText()` — canvas NO las decodifica | Usar solo texto plano ASCII/Unicode directo. Al escribir regex JS dentro de strings Python usar `\\d` (no `\d`) |
 | Dashboard no procesa datos aunque n8n terminó | `CSV_WAIT_ATTEMPTS` agotado (timeout de espera de CSVs) | Valor actual: 13200 s (220 min). Ajustar env var `RTB_CSV_WAIT_ATTEMPTS` sin rebuild |
+| Gráfica "Distribucion ciclo total" en Logística muestra `$12`, `$6`... | `renderHBarCanvas` usaba `formatMoney` hardcoded para el texto de las barras | Pasar `valueFmt: (v) => v + ' ped.'` en la llamada del histograma |
+| IVA por pagar en Finanzas muestra $0 o valor negativo confuso | Cuando `iva_trasladado = 0` (sin cobros en el periodo) el resultado es negativo — indica saldo a favor, no deuda | `renderFinanzasIva` ahora muestra "Saldo a favor" con valor absoluto cuando `iva_por_pagar < 0` |
+| `levantar_dashboard.sh` falla en el último test del webhook (tarda 220 min) | `wait_for_changed_facturas` usa `sleep` real con 13200 intentos; el test no inyectaba sleep | `create_app` acepta `sleep=` injectable; test usa `sleep=lambda _t: None` |
+| Tests de facturación en `test_webhook_app.py` fallan con `FileNotFoundError` en `find_latest_facturacion_csv` | Nombres de CSV en tests usaban formato `Facturas_2026-06.csv` — no pasan el regex allowlist que requiere `YYYY-MM-DD_HH-MM` | Renombrar a `Facturas_2026-06-02_10-00.csv` en los tests |
+| Puerto 8000 ocupado por otro servicio local | Docker Compose concatena `ports` de base + override, por eso no basta con el override para cambiar el puerto | `docker-compose.override.yml` (`.gitignore`) sobreescribe el mapeo; usar `RTB_BASE_URL=http://localhost:8001` para el script |
 
 ---
 
@@ -251,6 +256,8 @@ python -m unittest tests/test_finanzas_dashboard.py -v                 # 58 test
 python -m unittest tests/test_logistica_dashboard.py -v                # 44 tests
 # Suite completa sin FastAPI (247 tests):
 python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py -v
+# Suite completa incluyendo tests de integración FastAPI (298 tests):
+python -m unittest discover -s tests -v
 ```
 
 Correr siempre antes de hacer commit en `rtb_analisis.py`.
@@ -292,6 +299,9 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-08 | Sección "Estado de pedidos aprobados" en Logística rediseñada con el patrón visual de "Distribución por categoría" (Gastos Operativos): leyenda HTML `<div class="pie-legend">` con `<button class="legend-item">`, `status-name`+`status-dot` en tabla, interactividad bidireccional dona↔leyenda↔tabla. Helpers separados: `renderLogisticaEstadoPieChart`, `logisticaEstadoSliceAtEvent`, `setActiveLogisticaEstado`. |
 | 2026-06-08 | Command Center: nuevo endpoint `GET /api/data-files` + indicador "Archivos en data/" en el sidebar (badge verde/gris con conteo y lista de nombres). Se refresca automáticamente al cargar y después de cada operación. |
 | 2026-06-08 | `CSV_WAIT_ATTEMPTS` aumentado de 600 a 13200 (220 min × 60 s). Evita que el dashboard deje de esperar cuando n8n tarda más de 10 min en descargar todos los CSVs. |
+| 2026-06-12 | `renderHBarCanvas` ahora acepta `opts.valueFmt` para formatear el texto de las barras. Antes era `formatMoney` hardcoded. El histograma de ciclo total en Logística usa `valueFmt: (v) => v + ' ped.'`. |
+| 2026-06-12 | IVA estimado en Finanzas: `renderFinanzasIva` reescrito — usa `renderHBarCanvas` (una barra por concepto, valores absolutos) en lugar de `drawGroupedBarChart` con dos series idénticas. Cuando `iva_por_pagar < 0` muestra "Saldo a favor" en teal. El IVA trasladado es base caja (sobre cobros); si no hay cobros en el periodo = $0 es correcto. |
+| 2026-06-12 | `create_app` acepta `sleep: Callable` injectable para tests. `actualizar_datos` pasa `app.state.sleep` a `wait_for_changed_cotizaciones` y `wait_for_changed_facturas`. `levantar_dashboard.sh`: `BASE_URL` configurable via `${RTB_BASE_URL:-http://localhost:8000}`. Suite total: 298 tests. |
 | 2026-06-05 | Nuevo módulo Finanzas (7º tab): consolidación pura de los 5 módulos financieros. `build_finanzas_dashboard` recibe los 5 sub-dicts ya construidos (no CSVs). Dos lentes paralelas: Devengado (facturación vs compras+gastos) y Caja (cobranza vs pagos+gastos). Gastos en ambas bases. IVA trasladado derivado de lo cobrado (`cobrado − cobrado/1.16`). Snapshot `finanzas_latest.json`. 58 tests nuevos. Suite completa: 188 tests. |
 
 ---

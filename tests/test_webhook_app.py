@@ -233,6 +233,7 @@ class WebhookContractTests(unittest.TestCase):
                 data_dir=str(data_dir),
                 processed_dir=str(root / "procesada"),
                 dashboard_dir=str(root / "dashboard"),
+                sleep=lambda _t: None,
             )
         )
         response = client.post(
@@ -331,16 +332,16 @@ class WebhookContractTests(unittest.TestCase):
         root = Path(tmp.name)
         data_dir = root / "data"
         data_dir.mkdir()
-        (data_dir / "Cotizaciones_2026-06.csv").write_text(
+        (data_dir / "Cotizaciones_2026-06-02_10-00.csv").write_text(
             "Cotizacion_id,Estado_cotizacion,Total\nCOT-1,Aprobada,116\n",
             encoding="utf-8",
         )
-        (data_dir / "Facturas_2026-06.csv").write_text(
+        (data_dir / "Facturas_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion,#_Factura,Total\n"
             "FAC-1,COT-1,Aprobada,Factura enviada,2026-06-02,F-1,116\n",
             encoding="utf-8",
         )
-        (data_dir / "Facturas_Secundarias_2026-06.csv").write_text(
+        (data_dir / "Facturas_Secundarias_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion_Secundaria,#_Factura,Total\n",
             encoding="utf-8",
         )
@@ -359,16 +360,16 @@ class WebhookContractTests(unittest.TestCase):
         root = Path(tmp.name)
         data_dir = root / "data"
         data_dir.mkdir()
-        (data_dir / "Cotizaciones_2026-06.csv").write_text(
+        (data_dir / "Cotizaciones_2026-06-02_10-00.csv").write_text(
             "Cotizacion_id,Estado_cotizacion,Total\nCOT-1,Aprobada,116\n",
             encoding="utf-8",
         )
-        (data_dir / "Facturas_2026-06.csv").write_text(
+        (data_dir / "Facturas_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion,#_Factura,Total\n"
             "FAC-1,COT-1,Aprobada,Factura enviada,2026-06-02,F-1,116\n",
             encoding="utf-8",
         )
-        (data_dir / "Facturas_Secundarias_2026-06.csv").write_text(
+        (data_dir / "Facturas_Secundarias_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion_Secundaria,#_Factura,Total\n",
             encoding="utf-8",
         )
@@ -377,7 +378,7 @@ class WebhookContractTests(unittest.TestCase):
 
         self.assertEqual(snapshot["dashboard"]["facturacion"]["kpis"]["facturas_vigentes"], 1)
         written = json.loads((root / "dashboard" / "facturacion_latest.json").read_text(encoding="utf-8"))
-        self.assertEqual(written["files"]["principales"], "Facturas_2026-06.csv")
+        self.assertEqual(written["files"]["principales"], "Facturas_2026-06-02_10-00.csv")
 
     def test_publish_facturacion_snapshot_uses_supplied_cotizaciones_path(self):
         import rtb_web
@@ -391,12 +392,12 @@ class WebhookContractTests(unittest.TestCase):
         stale.write_text("Cotizacion_id,Estado_cotizacion,Total\nCOT-OLD,Aprobada,999\n", encoding="utf-8")
         fresh = root / "Cotizaciones_fresh.csv"
         fresh.write_text("Cotizacion_id,Estado_cotizacion,Total\nCOT-1,Aprobada,116\n", encoding="utf-8")
-        (data_dir / "Facturas_2026-06.csv").write_text(
+        (data_dir / "Facturas_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion,#_Factura,Total\n"
             "FAC-1,COT-1,Aprobada,Factura enviada,2026-06-02,F-1,116\n",
             encoding="utf-8",
         )
-        (data_dir / "Facturas_Secundarias_2026-06.csv").write_text(
+        (data_dir / "Facturas_Secundarias_2026-06-02_10-00.csv").write_text(
             "Factura_id,Factura_cotizacion,Factura_Estado_Aprobacion,Estado_Factura,Fecha_Facturacion_Secundaria,#_Factura,Total\n",
             encoding="utf-8",
         )

@@ -3383,7 +3383,7 @@ def render_index() -> str:
           ctx.arcTo(bx, by, bx + rv, by, rv);
           ctx.closePath();
           ctx.fill();
-          const valText = formatMoney(d[opts.barField] || 0);
+          const valText = opts.valueFmt ? opts.valueFmt(d[opts.barField] || 0) : formatMoney(d[opts.barField] || 0);
           ctx.font = 'bold 11px system-ui, sans-serif';
           if (barW > 70) {
             ctx.fillStyle = '#fff';
@@ -6292,6 +6292,7 @@ def render_index() -> str:
             document.querySelector('#logisticaLeadHistTooltip'),
             hist,
             { barField: 'n', labelField: 'rango', color: LOG_LOCAL_COLOR,
+              valueFmt: (v) => v + ' ped.',
               tooltipFn: (d) => `<strong>${escapeHtml(d.rango)}</strong><br>${d.n} pedido(s)` }
           );
         }
@@ -6459,30 +6460,38 @@ def render_index() -> str:
       const section = document.querySelector('#finanzasIvaSection');
       if (!kpis.iva_trasladado && !kpis.iva_acreditable) { if (section) section.hidden = true; return; }
       if (section) section.hidden = false;
+      const ivaXPagar = kpis.iva_por_pagar || 0;
+      const saldoFavor = ivaXPagar < 0;
       const cardsEl = document.querySelector('#finanzasIvaCards');
       if (cardsEl) {
         const ivaData = [
-          { label: 'IVA trasladado',  value: formatMoney(kpis.iva_trasladado),  note: 'Sobre lo cobrado',   color: '#276f86' },
-          { label: 'IVA acreditable', value: formatMoney(kpis.iva_acreditable), note: 'Compras + deducibles', color: '#57c5b6' },
-          { label: 'IVA por pagar',   value: formatMoney(kpis.iva_por_pagar),   note: 'Trasladado − acred.',  color: kpis.iva_por_pagar < 0 ? '#57c5b6' : '#d96058' },
+          { label: 'IVA trasladado',  value: formatMoney(kpis.iva_trasladado),  note: 'Sobre lo cobrado',        color: '#276f86' },
+          { label: 'IVA acreditable', value: formatMoney(kpis.iva_acreditable), note: 'Compras + deducibles',    color: '#57c5b6' },
+          { label: saldoFavor ? 'Saldo a favor' : 'IVA por pagar',
+            value: formatMoney(Math.abs(ivaXPagar)),
+            note:  saldoFavor ? 'Acreditable > trasladado' : 'Trasladado − acred.',
+            color: saldoFavor ? '#57c5b6' : '#d96058' },
         ];
         cardsEl.innerHTML = ivaData.map(d =>
           `<div class="tiempos-kpi" style="border-left-color:${d.color};min-width:160px">
-             <strong style="font-size:18px">${d.value}</strong>
+             <strong style="font-size:18px;color:${d.color}">${d.value}</strong>
              <span>${d.label}</span>
              <span style="font-size:11px;color:#65717e">${d.note}</span>
            </div>`
         ).join('');
       }
-      // Grafica de barras horizontal del IVA split
       if (ivaSplit && ivaSplit.length) {
-        drawGroupedBarChart(
+        const chartData = ivaSplit.map(d => ({
+          tipo: (d.tipo === 'Por pagar' && saldoFavor) ? 'Saldo a favor' : d.tipo,
+          m: Math.abs(d.m || 0),
+        }));
+        renderHBarCanvas(
           document.querySelector('#finanzasIvaChart'),
           document.querySelector('#finanzasIvaTooltip'),
-          ivaSplit,
-          { seriesA: { key: 'm', label: 'Monto IVA', color: '#276f86' },
-            seriesB: { key: 'm', label: 'Monto IVA', color: '#276f86' },
-            labelKey: 'tipo', valueFmt: formatMoney, state: finanzasIvaGroupedState }
+          chartData,
+          { barField: 'm', labelField: 'tipo', color: '#276f86',
+            valueFmt: (v) => formatMoney(v),
+            tooltipFn: (d) => `<strong>${escapeHtml(d.tipo)}</strong><br>${formatMoney(d.m)}` }
         );
       }
     }
@@ -6493,11 +6502,16 @@ def render_index() -> str:
       const mrgCaja = kpis.margen_caja != null ? (kpis.margen_caja * 100).toFixed(1) + '%' : '—';
       const utilClass = kpis.utilidad_devengada >= 0 ? 'primary' : 'warning';
       const cajaClass  = kpis.flujo_caja_neto   >= 0 ? 'accent'  : 'warning';
+      const ivaXPagarCard = kpis.iva_por_pagar || 0;
+      const ivaSaldoFavorCard = ivaXPagarCard < 0;
+      const ivaPagarLabel = ivaSaldoFavorCard ? 'Saldo a favor' : 'Por pagar (est.)';
+      const ivaPagarVal   = formatMoney(Math.abs(ivaXPagarCard));
+      const ivaPagarNote  = ivaSaldoFavorCard ? 'Acreditable > trasladado' : 'Trasladado − acreditable';
       const cards = [];
       cards.push(`<article class="kpi-card ${utilClass}"><h2>Utilidad devengada</h2><div class="kpi-pair">${metric('Ingreso facturado', formatMoney(kpis.ingreso_devengado), 'Facturas vigentes del periodo')}${metric('Egreso devengado', formatMoney(kpis.egreso_devengado), 'Compras + Gastos op.')}</div>${metric('Resultado c/IVA (margen ' + mrgDev + ')', formatMoney(kpis.utilidad_devengada), 'Base devengada')}</article>`);
       cards.push(`<article class="kpi-card ${cajaClass}"><h2>Flujo de caja</h2><div class="kpi-pair">${metric('Ingreso cobrado', formatMoney(kpis.ingreso_caja), 'Cobranza del periodo')}${metric('Egreso pagado', formatMoney(kpis.egreso_caja), 'Pagos + Gastos op.')}</div>${metric('Flujo neto (margen ' + mrgCaja + ')', formatMoney(kpis.flujo_caja_neto), 'Base caja')}</article>`);
       cards.push(`<article class="kpi-card accent"><h2>Pendiente por cobrar</h2><div class="kpi-pair">${metric('Monto backlog', formatMoney(kpis.pendiente_cobro), 'Cotizaciones aprobadas sin cobro')}${metric('Cotizaciones', formatNumber(kpis.n_pendientes_cobro), 'Pendientes al cierre')}</div></article>`);
-      cards.push(`<article class="kpi-card accent"><h2>IVA estimado</h2><div class="kpi-pair">${metric('Trasladado', formatMoney(kpis.iva_trasladado), 'Sobre lo cobrado')}${metric('Acreditable', formatMoney(kpis.iva_acreditable), 'Compras + deducibles')}</div>${metric('Por pagar (estimado)', formatMoney(kpis.iva_por_pagar), 'Trasladado − acreditable')}</article>`);
+      cards.push(`<article class="kpi-card accent"><h2>IVA estimado</h2><div class="kpi-pair">${metric('Trasladado', formatMoney(kpis.iva_trasladado), 'Sobre lo cobrado')}${metric('Acreditable', formatMoney(kpis.iva_acreditable), 'Compras + deducibles')}</div>${metric(ivaPagarLabel, ivaPagarVal, ivaPagarNote)}</article>`);
       if (finanzasKpiGrid) finanzasKpiGrid.innerHTML = cards.join('');
       attachKpiCanvases();
       renderFinanzasTemporal(body.series?.temporal);
@@ -6646,12 +6660,14 @@ def create_app(
     data_dir: str = "data",
     processed_dir: str = "data_procesada",
     dashboard_dir: str = "dashboard_data",
+    sleep: Callable[[float], None] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Dashboard RTB", version="0.3.0")
     app.state.http_post = http_post
     app.state.data_dir = data_dir
     app.state.dashboard_dir = dashboard_dir
     app.state.processed_dir = processed_dir
+    app.state.sleep = sleep if sleep is not None else sleep_seconds
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -6759,8 +6775,8 @@ def create_app(
                 # pero n8n sigue corriendo y depositara los archivos. Continuamos esperandolos.
                 if webhook["status_code"] not in (502, 524):
                     raise
-            csv_path = wait_for_changed_cotizaciones(request.app.state.data_dir, before)
-            wait_for_changed_facturas(request.app.state.data_dir, before_facturas)
+            csv_path = wait_for_changed_cotizaciones(request.app.state.data_dir, before, sleep=request.app.state.sleep)
+            wait_for_changed_facturas(request.app.state.data_dir, before_facturas, sleep=request.app.state.sleep)
             try:
                 publish_facturacion_snapshot(
                     request.app.state.data_dir,

@@ -15,7 +15,7 @@ required_patterns=(
   "docker compose up --build -d"
   "docker compose exec -T dashboard-rtb python3 -m py_compile"
   "docker compose exec -T dashboard-rtb python3 -m unittest discover -s tests -v"
-  'BASE_URL="http://localhost:8000"'
+  'BASE_URL="${RTB_BASE_URL:-http://localhost:8000}"'
   '$BASE_URL/'
   '$BASE_URL/api/dashboard/ventas'
   '$BASE_URL/api/dashboard/facturacion'
