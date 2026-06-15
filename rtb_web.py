@@ -1158,7 +1158,7 @@ def render_index() -> str:
           <span class="status-label" id="csvReadyLabel">Archivos listos</span>
           <span class="pill success" id="csvReadyBadge">&#10003; Descargados</span>
         </div>
-        <p class="status-detail" id="csvReadyDetail">Iniciando regeneracion de snapshots...</p>
+        <p class="status-detail" id="csvReadyDetail">Archivos descargados. Verifica el rango de fechas y presiona "Regenerar con archivos actuales".</p>
       </section>
 
       <div class="payload">
@@ -8101,7 +8101,6 @@ def render_index() -> str:
       }
 
       submitButton.disabled = true;
-      showDownloadOverlay();
       setStatus('Enviando', '', 'Llamando webhook n8n...');
       try {
         const response = await fetch('/api/actualizar-datos', {
@@ -8119,9 +8118,9 @@ def render_index() -> str:
           fecha_desde: form.fecha_desde.value,
           fecha_hasta: form.fecha_hasta.value
         }));
-        window.location.reload();
+        setStatus('Esperando', '', 'Webhook enviado. Esperando archivos de n8n...');
+        startPollingDescarga();
       } catch (error) {
-        hideDownloadOverlay();
         setStatus('Error', 'error', error.message);
       } finally {
         submitButton.disabled = false;
@@ -8156,53 +8155,72 @@ def render_index() -> str:
       }
     });
 
-    async function autoRegenerateAfterWebhook(ctx) {
-      const banner     = document.querySelector('#csvReadyBanner');
-      const bannerBadge  = document.querySelector('#csvReadyBadge');
-      const bannerDetail = document.querySelector('#csvReadyDetail');
-      submitButton.disabled  = true;
-      regenerarButton.disabled = true;
-      if (bannerDetail) bannerDetail.textContent = 'Regenerando snapshots con archivos descargados...';
-      if (bannerBadge)  { bannerBadge.textContent = 'Regenerando...'; bannerBadge.className = 'pill'; }
-      try {
-        const response = await fetch('/api/regenerar-snapshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fecha_desde: ctx.fecha_desde, fecha_hasta: ctx.fecha_hasta })
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || 'No se pudo regenerar.');
-        if (bannerBadge)  { bannerBadge.textContent = '✓ Listo'; bannerBadge.className = 'pill success'; }
-        if (bannerDetail) bannerDetail.textContent = 'Snapshots regenerados. Recargando dashboard...';
-        await refreshDataFiles();
-        setTimeout(() => window.location.reload(), 1400);
-      } catch (error) {
-        if (bannerBadge)  { bannerBadge.textContent = 'Error'; bannerBadge.className = 'pill error'; }
-        if (bannerDetail) bannerDetail.textContent = 'Error al regenerar: ' + error.message;
-        submitButton.disabled  = false;
-        regenerarButton.disabled = false;
-      }
+    let _pollingInterval = null;
+
+    function mostrarBannerDescarga(nFiles) {
+      const banner = document.querySelector('#csvReadyBanner');
+      const badge  = document.querySelector('#csvReadyBadge');
+      const detail = document.querySelector('#csvReadyDetail');
+      if (badge)  { badge.textContent = '✓ ' + nFiles + ' archivos'; badge.className = 'pill success'; }
+      if (detail) detail.textContent = nFiles + ' archivos en data/. Verifica el rango de fechas y presiona "Regenerar con archivos actuales".';
+      if (banner) banner.hidden = false;
+    }
+
+    function startPollingDescarga() {
+      if (_pollingInterval) return;
+      let intentos = 0;
+      _pollingInterval = setInterval(async () => {
+        intentos++;
+        try {
+          await refreshDataFiles();
+          const resp = await fetch('/api/estado-descarga');
+          const data = await resp.json();
+          if (data.lista) {
+            clearInterval(_pollingInterval);
+            _pollingInterval = null;
+            hideDownloadOverlay();
+            mostrarBannerDescarga(data.n_files);
+            setStatus('Listos', 'success', data.n_files + ' archivos descargados.');
+          } else {
+            setStatus('Esperando', '', 'Esperando archivos de n8n... ' + data.n_files + ' / 20-22 en data/');
+          }
+        } catch (_) {}
+        if (intentos >= 360) {
+          clearInterval(_pollingInterval);
+          _pollingInterval = null;
+          hideDownloadOverlay();
+          setStatus('Timeout', 'error', 'No llegaron todos los archivos en 30 min. Revisa n8n.');
+        }
+      }, 5000);
     }
 
     refreshPayload();
     refreshDataFiles();
     loadVentasKpis();
 
-    const _csvReadyRaw = localStorage.getItem('rtb_csv_ready');
-    if (_csvReadyRaw) {
-      try {
-        const _ctx = JSON.parse(_csvReadyRaw);
-        localStorage.removeItem('rtb_csv_ready');
-        if (_ctx.fecha_desde) form.fecha_desde.value = _ctx.fecha_desde;
-        if (_ctx.fecha_hasta) form.fecha_hasta.value = _ctx.fecha_hasta;
-        refreshPayload();
-        const _banner = document.querySelector('#csvReadyBanner');
-        if (_banner) _banner.hidden = false;
-        autoRegenerateAfterWebhook(_ctx);
-      } catch (_) {
-        localStorage.removeItem('rtb_csv_ready');
+    (async () => {
+      const _csvReadyRaw = localStorage.getItem('rtb_csv_ready');
+      if (_csvReadyRaw) {
+        try {
+          const _ctx = JSON.parse(_csvReadyRaw);
+          if (_ctx.fecha_desde) form.fecha_desde.value = _ctx.fecha_desde;
+          if (_ctx.fecha_hasta) form.fecha_hasta.value = _ctx.fecha_hasta;
+          refreshPayload();
+        } catch (_) {
+          localStorage.removeItem('rtb_csv_ready');
+        }
       }
-    }
+      try {
+        const resp = await fetch('/api/estado-descarga');
+        const data = await resp.json();
+        if (data.lista) {
+          localStorage.removeItem('rtb_csv_ready');
+          mostrarBannerDescarga(data.n_files);
+        } else if (_csvReadyRaw) {
+          startPollingDescarga();
+        }
+      } catch (_) {}
+    })();
   </script>
 </body>
 </html>""".replace("PAYLOAD_TEXT", payload_text)
@@ -8226,6 +8244,7 @@ def create_app(
     app.state.dashboard_dir = dashboard_dir
     app.state.processed_dir = processed_dir
     app.state.sleep = sleep if sleep is not None else sleep_seconds
+    app.state.descarga_lista = None
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -8345,8 +8364,6 @@ def create_app(
     def actualizar_datos(payload: UpdateRequest, request: Request) -> dict:
         try:
             validate_request(payload.ambiente, payload.fecha_desde, payload.fecha_hasta)
-            before = snapshot_cotizaciones(request.app.state.data_dir)
-            before_facturas = snapshot_facturas(request.app.state.data_dir)
             webhook = call_webhook(
                 payload.ambiente,
                 payload.fecha_desde,
@@ -8356,122 +8373,45 @@ def create_app(
             try:
                 validate_webhook_success(webhook)
             except WebhookResponseError:
-                # 502/524: proxy o Cloudflare corto la conexion antes de que n8n respondiera,
-                # pero n8n sigue corriendo y depositara los archivos. Continuamos esperandolos.
                 if webhook["status_code"] not in (502, 524):
                     raise
-            csv_path = wait_for_changed_cotizaciones(request.app.state.data_dir, before, sleep=request.app.state.sleep)
-            wait_for_changed_facturas(request.app.state.data_dir, before_facturas, sleep=request.app.state.sleep)
-            try:
-                publish_facturacion_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                    cot_path=csv_path,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_compras_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_cobranza_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_pagos_proveedores_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_gastos_operativos_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_logistica_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_inventario_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_almacen_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except FileNotFoundError:
-                pass
-            try:
-                publish_finanzas_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except Exception:
-                pass
-            try:
-                publish_pnl_snapshot(
-                    request.app.state.data_dir,
-                    request.app.state.dashboard_dir,
-                    payload.fecha_desde,
-                    payload.fecha_hasta,
-                )
-            except Exception:
-                pass
-            snapshot = publish_ventas_snapshot(
-                request.app.state.data_dir,
-                request.app.state.dashboard_dir,
-                before,
-                payload.fecha_desde,
-                payload.fecha_hasta,
-                csv_path=csv_path,
-            )
-            archived = archive_data_dir(
-                request.app.state.data_dir,
-                request.app.state.processed_dir,
-            )
-            return {**webhook, "status": "completada", "files": [snapshot["file"]], "archived": archived}
+            return {**webhook, "status": "webhook_enviado"}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except WebhookResponseError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except requests.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"Error llamando webhook n8n: {exc}") from exc
+
+    @app.post("/api/notificar-descarga", status_code=status.HTTP_200_OK)
+    def notificar_descarga(request: Request) -> dict:
+        from datetime import datetime, timezone
+        data_dir = Path(request.app.state.data_dir)
+        try:
+            n_files = len([f for f in data_dir.iterdir() if f.suffix == ".csv"])
+        except FileNotFoundError:
+            n_files = 0
+        request.app.state.descarga_lista = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "n_files": n_files,
+        }
+        return {"ok": True, "n_files": n_files}
+
+    @app.get("/api/estado-descarga")
+    def estado_descarga(request: Request) -> dict:
+        data_dir = Path(request.app.state.data_dir)
+        try:
+            n_files = len([f for f in data_dir.iterdir() if f.suffix == ".csv"])
+        except FileNotFoundError:
+            n_files = 0
+        estado = request.app.state.descarga_lista
+        lista = estado is not None or n_files >= 20
+        return {
+            "lista": lista,
+            "n_files": n_files,
+            "notificado": estado is not None,
+            "notificado_en": estado["timestamp"] if estado else None,
+        }
 
     class RegenerarRequest(BaseModel):
         fecha_desde: str
@@ -8597,6 +8537,7 @@ def create_app(
                 request.app.state.data_dir,
                 request.app.state.processed_dir,
             )
+            request.app.state.descarga_lista = None
             return {"status": "regenerado", "files": files_regenerated, "archived": archived}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
