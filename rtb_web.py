@@ -3,6 +3,7 @@
 """App local para validar la descarga de datos RTB via n8n."""
 
 from datetime import datetime, timezone
+import io
 import json
 import os
 import shutil
@@ -13,9 +14,11 @@ from typing import Callable
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import rtb_pdf
+
 import requests
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from rtb_analisis import (
@@ -1135,6 +1138,7 @@ def render_index() -> str:
         </div>
         <button id="submitButton" type="submit">Activar webhook</button>
         <button id="regenerarButton" type="button" style="margin-top:8px;width:100%;background:#159895;border:none;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;font-size:.85rem;font-weight:600;opacity:.9;" title="Regenera los snapshots con los archivos ya descargados en data/, sin llamar a n8n. Util cuando el webhook falla pero los archivos si llegaron.">Regenerar con archivos actuales</button>
+        <button id="exportarButton" type="button" style="margin-top:8px;width:100%;background:#276f86;border:none;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;font-size:.85rem;font-weight:600;opacity:.9;" title="Genera un ZIP con un PDF por modulo mas un PDF combinado, usando los snapshots actuales. Regenerar antes si los datos cambiaron.">&#8659; Exportar reportes (PDF/ZIP)</button>
       </form>
 
       <section class="status-card" aria-live="polite">
@@ -2144,6 +2148,7 @@ def render_index() -> str:
     const form = document.querySelector('#updateForm');
     const submitButton = document.querySelector('#submitButton');
     const regenerarButton = document.querySelector('#regenerarButton');
+    const exportarButton = document.querySelector('#exportarButton');
     const downloadOverlay = document.querySelector('#downloadOverlay');
     const statusBadge = document.querySelector('#statusBadge');
     const statusDetail = document.querySelector('#statusDetail');
@@ -8155,6 +8160,33 @@ def render_index() -> str:
       }
     });
 
+    exportarButton.addEventListener('click', async () => {
+      exportarButton.disabled = true;
+      setStatus('Exportando', '', 'Generando PDF y ZIP... puede tardar unos segundos.');
+      try {
+        const resp = await fetch('/api/exportar-reportes');
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || 'No se pudo generar el ZIP.');
+        }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const fecha = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = 'reportes_rtb_' + fecha + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setStatus('Exportado', 'success', 'ZIP descargado correctamente.');
+      } catch (error) {
+        setStatus('Error', 'error', error.message);
+      } finally {
+        exportarButton.disabled = false;
+      }
+    });
+
     let _pollingInterval = null;
 
     function mostrarBannerDescarga(nFiles) {
@@ -8350,6 +8382,45 @@ def create_app(
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/exportar-reportes")
+    def exportar_reportes(request: Request) -> StreamingResponse:
+        """Genera un ZIP con un PDF por modulo mas un PDF combinado, desde los snapshots actuales.
+        Devuelve HTTP 404 si no hay ningun snapshot disponible (regenerar primero)."""
+        data_dir = request.app.state.data_dir
+        dash_dir = request.app.state.dashboard_dir
+        loaders = [
+            ("Ventas",             load_dashboard_payload),
+            ("Facturacion",        load_facturacion_payload),
+            ("Almacen",            load_almacen_payload),
+            ("Compras",            load_compras_payload),
+            ("Cobranza",           load_cobranza_payload),
+            ("Pagos Proveedores",  load_pagos_proveedores_payload),
+            ("Gastos Operativos",  load_gastos_operativos_payload),
+            ("Logistica",          load_logistica_payload),
+            ("Inventario",         load_inventario_payload),
+            ("Finanzas",           load_finanzas_payload),
+            ("P&L",                load_pnl_payload),
+        ]
+        modules = []
+        for label, fn in loaders:
+            try:
+                modules.append((label, fn(data_dir, dash_dir)))
+            except FileNotFoundError:
+                continue
+        if not modules:
+            raise HTTPException(
+                status_code=404,
+                detail="No hay snapshots disponibles. Presiona 'Regenerar con archivos actuales' primero.",
+            )
+        zip_bytes = rtb_pdf.build_reports_zip(modules)
+        fecha = datetime.now().strftime("%Y-%m-%d")
+        headers = {"Content-Disposition": f'attachment; filename="reportes_rtb_{fecha}.zip"'}
+        return StreamingResponse(
+            io.BytesIO(zip_bytes),
+            media_type="application/zip",
+            headers=headers,
+        )
 
     @app.get("/api/data-files")
     def data_files(request: Request) -> dict:

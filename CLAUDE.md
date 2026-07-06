@@ -30,6 +30,7 @@ El override monta el código local (`.:/app`) — cambios en `.py` se reflejan s
 |---|---|
 | `rtb_analisis.py` | Toda la lógica de cálculo. Funciones `build_*_dashboard()` |
 | `rtb_web.py` | API FastAPI + HTML/CSS/JS del frontend completo |
+| `rtb_pdf.py` | Generador de PDF y ZIP (reportlab). Independiente de FastAPI. Funciones: `build_module_pdf`, `build_combined_pdf`, `build_reports_zip`, `prettify_label` |
 | `dashboard_data/*_latest.json` | Snapshots cacheados que sirve la API |
 | `data/` | CSVs activos que lee el servidor |
 | `data_procesada/YYYY-MM-DD_HH-MM-SS_datos/` | Histórico de cada corrida de n8n |
@@ -37,6 +38,7 @@ El override monta el código local (`.:/app`) — cambios en `.py` se reflejan s
 | `tests/test_facturacion_dashboard.py` | Suite facturación |
 | `tests/test_compras_dashboard.py` | Suite compras (22 tests) |
 | `tests/test_cobranza_dashboard.py` | Suite cobranza (39 tests) |
+| `tests/test_pdf_export.py` | Suite exportación PDF/ZIP (29 tests) |
 
 ---
 
@@ -298,9 +300,10 @@ python -m unittest tests/test_logistica_dashboard.py -v                # 44 test
 python -m unittest tests/test_inventario_dashboard.py -v               # 33 tests
 python -m unittest tests/test_almacen_dashboard.py -v                  # 48 tests
 python -m unittest tests/test_pnl_dashboard.py -v                      # 66 tests
-# Suite completa sin FastAPI (394 tests):
-python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py tests/test_pnl_dashboard.py -v
-# Suite completa incluyendo tests de integracion FastAPI (396 tests):
+python -m unittest tests/test_pdf_export.py -v                         # 29 tests (PDF/ZIP)
+# Suite completa sin FastAPI (423 tests):
+python -m unittest tests/test_facturacion_dashboard.py tests/test_compras_dashboard.py tests/test_cobranza_dashboard.py tests/test_pagos_proveedores_dashboard.py tests/test_gastos_operativos_dashboard.py tests/test_finanzas_dashboard.py tests/test_logistica_dashboard.py tests/test_inventario_dashboard.py tests/test_almacen_dashboard.py tests/test_pnl_dashboard.py tests/test_pdf_export.py -v
+# Suite completa incluyendo tests de integracion FastAPI (425 tests):
 python -m unittest discover -s tests -v
 ```
 
@@ -363,6 +366,8 @@ Correr siempre antes de hacer commit en `rtb_analisis.py`.
 | 2026-06-15 | **Flujo de descarga cambiado a completamente manual.** Motivo: la Raspberry Pi se reinicio con Nextcloud bloqueado por contrasena → archivos de n8n llegaron escalonados → el auto-proceso arrancaba con datos incompletos (faltaba `Cotizaciones_*.csv` y otros). Cambios: (1) `POST /api/actualizar-datos` solo llama el webhook de n8n y regresa de inmediato — ya no espera ni procesa nada. (2) Nuevo `POST /api/notificar-descarga` — n8n lo llama al terminar de depositar todos los archivos; guarda flag en `app.state.descarga_lista`. (3) Nuevo `GET /api/estado-descarga` — devuelve `{lista, n_files, notificado, notificado_en}`; `lista=true` cuando `n_files >= 20` o hay notificacion. (4) Frontend hace polling cada 5 s a `/api/estado-descarga`; cuando `lista=true` muestra banner "✓ N archivos descargados" y detiene el polling. (5) Usuario revisa rango de fechas y presiona "Regenerar con archivos actuales" manualmente. `regenerar-snapshot` limpia `app.state.descarga_lista` al finalizar. Timeout del polling: 30 min (360 intentos × 5 s). |
 
 ---
+
+| 2026-06-30 | **Exportacion de reportes a PDF/ZIP.** Nuevo modulo `rtb_pdf.py` (independiente de FastAPI): renderizador generico que recorre la estructura uniforme de cada payload (`periodo`/`kpis`/`series`/`tables`/`signals`). Funciones publicas: `build_module_pdf(label, payload)→bytes`, `build_combined_pdf(modules)→bytes`, `build_reports_zip(modules)→bytes`, `prettify_label(key)→str`. El ZIP contiene `_reporte_completo.pdf` + 1 PDF por modulo (slugificado). Nuevo endpoint `GET /api/exportar-reportes` en `rtb_web.py` — itera los 11 `load_*_payload` con `try/except FileNotFoundError` (mismo patron que `regenerar-snapshot`); devuelve `StreamingResponse(application/zip)`. HTTP 404 si no hay ningun snapshot disponible. Boton "Exportar reportes (PDF/ZIP)" en el sidebar Command Center (junto a "Regenerar"); handler JS descarga via blob. `reportlab==4.3.1` agregado a `requirements.txt` (rebuild Docker necesario una vez). 29 tests nuevos en `tests/test_pdf_export.py`. Suite sin FastAPI: 423 tests. |
 
 ## Nota de despliegue — git push
 

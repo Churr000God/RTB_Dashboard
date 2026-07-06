@@ -2,13 +2,14 @@ services:
   dashboard-rtb:
     build: .
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
       PYTHONUNBUFFERED: "1"
       RTB_WEBHOOK_TEST_URL: "${RTB_WEBHOOK_TEST_URL:-}"
       RTB_WEBHOOK_PROD_URL: "${RTB_WEBHOOK_PROD_URL:-}"
     volumes:
-      - ./data:/app/data
-      - ./data_procesada:/app/data_procesada
-      - ./dashboard_data:/app/dashboard_data
+      - /home/dhguilleng/Nextcloud/Sistemas/REPORTES/Dashboard_interactivo_reportes/data:/app/data
+      - /home/dhguilleng/Nextcloud/Sistemas/REPORTES/Dashboard_interactivo_reportes/data_procesada:/app/data_procesada
+      - /home/dhguilleng/Nextcloud/Sistemas/REPORTES/Dashboard_interactivo_reportes/dashboard_data:/app/dashboard_data
     command: uvicorn rtb_web:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
